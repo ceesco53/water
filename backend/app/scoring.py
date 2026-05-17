@@ -12,6 +12,7 @@ def compute_score(
     factors: list[dict] = []
 
     # Bacteria — highest weight, primary safety signal
+    # api_unavailable = partner key required (not a water quality issue — no penalty)
     if swimguide_status == "unsafe":
         score -= 60
         factors.append({"label": "Bacteria (Swim Guide)", "impact": -60,
@@ -20,6 +21,9 @@ def compute_score(
         score -= 30
         factors.append({"label": "Bacteria (Swim Guide)", "impact": -30,
                          "reason": "Caution advisory in effect"})
+    elif swimguide_status == "api_unavailable":
+        factors.append({"label": "Bacteria (Swim Guide)", "impact": 0,
+                         "reason": "API requires partner key — check Sound Rivers directly"})
     elif swimguide_status == "unknown":
         score -= 5
         factors.append({"label": "Bacteria (Swim Guide)", "impact": -5,

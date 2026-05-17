@@ -4,14 +4,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 SWIMGUIDE_BASE = "https://www.theswimguide.org/api/v2"
+SOUND_RIVERS_URL = "https://soundrivers.org/swim-guide/"
 
 TARGET_KEYWORDS = ["river bend", "trent", "brices creek", "lawson", "new bern", "trent woods"]
-
-# Swim Guide status codes: 1=safe, 2=unsafe, 3=caution, 4=no_data
 STATUS_MAP = {1: "safe", 2: "unsafe", 3: "caution", 4: "unknown"}
 
 
 async def fetch_swimguide_data() -> dict:
+    """
+    Swim Guide API v2 requires partner authentication (returns 401 without a key).
+    We attempt the call and return api_unavailable if denied, so the score is not
+    penalized for an access issue — rainfall/flow already serve as the bacteria proxy.
+    """
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
             resp = await client.get(
@@ -19,11 +23,24 @@ async def fetch_swimguide_data() -> dict:
                 params={"search": "New Bern", "country": "US"},
                 headers={"Accept": "application/json"},
             )
+            if resp.status_code == 401:
+                logger.warning("Swim Guide API returned 401 — partner API key required")
+                return {
+                    "status": "api_unavailable",
+                    "beaches": [],
+                    "source_url": SOUND_RIVERS_URL,
+                    "error": "Swim Guide API requires partner authentication",
+                }
             resp.raise_for_status()
             raw = resp.json()
     except Exception as e:
-        logger.warning(f"Swim Guide API unavailable: {e}")
-        return {"status": "unknown", "beaches": [], "error": str(e)}
+        logger.warning("Swim Guide API failed: %s", e)
+        return {
+            "status": "api_unavailable",
+            "beaches": [],
+            "source_url": SOUND_RIVERS_URL,
+            "error": str(e),
+        }
 
     beaches_list = raw if isinstance(raw, list) else raw.get("results", raw.get("beaches", []))
 
@@ -41,7 +58,6 @@ async def fetch_swimguide_data() -> dict:
                 }
             )
 
-    # Fallback: take first few results if none matched keywords
     if not relevant and beaches_list:
         for beach in beaches_list[:5]:
             status_code = beach.get("status") or beach.get("safetyStatus")
@@ -67,4 +83,4 @@ async def fetch_swimguide_data() -> dict:
     else:
         agg = "unknown"
 
-    return {"status": agg, "beaches": relevant}
+    return {"status": agg, "beaches": relevant, "source_url": SOUND_RIVERS_URL}

@@ -55,13 +55,6 @@ async def _build_conditions() -> dict:
         upstream_discharge_p80=upstream.get("discharge_cfs_p80"),
     )
 
-    temp_c = (
-        upstream.get("water_temp_c")
-        or local.get("water_temp_c")
-        or secondary.get("water_temp_c")
-    )
-    temp_f = round(temp_c * 9 / 5 + 32, 1) if temp_c is not None else None
-
     return {
         "score": score,
         "rating": rating,
@@ -70,6 +63,7 @@ async def _build_conditions() -> dict:
         "swimguide": {
             "status": swimguide_res.get("status", "unknown"),
             "beaches": swimguide_res.get("beaches", []),
+            "source_url": swimguide_res.get("source_url"),
             "error": swimguide_res.get("error"),
         },
         "weather": {
@@ -102,7 +96,8 @@ async def _build_conditions() -> dict:
                 "gage_height_ft": secondary.get("gage_height_ft"),
             },
         },
-        "water_temp_f": temp_f,
+        "water_temp_f": weather_res.get("water_temp_f"),
+        "water_temp_source": weather_res.get("water_temp_source"),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
 

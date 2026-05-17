@@ -28,8 +28,9 @@ export interface Conditions {
   rating_color: RatingColor
   score_factors: ScoreFactor[]
   swimguide: {
-    status: 'safe' | 'unsafe' | 'caution' | 'unknown'
+    status: 'safe' | 'unsafe' | 'caution' | 'unknown' | 'api_unavailable'
     beaches: Beach[]
+    source_url?: string
     error?: string
   }
   weather: {
@@ -44,6 +45,7 @@ export interface Conditions {
     secondary: Gauge
   }
   water_temp_f: number | null
+  water_temp_source: string | null
   last_updated: string
   cache_age_seconds: number
 }

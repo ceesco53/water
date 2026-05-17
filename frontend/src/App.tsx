@@ -17,7 +17,13 @@ function swimguideStatus(status: string): 'ok' | 'warn' | 'danger' | 'unknown' {
 }
 
 function swimguideLabel(status: string) {
-  return { safe: 'Safe', caution: 'Caution', unsafe: 'Unsafe', unknown: 'Unknown' }[status] ?? status
+  return {
+    safe: 'Safe',
+    caution: 'Caution',
+    unsafe: 'Unsafe',
+    unknown: 'Unknown',
+    api_unavailable: 'Check Directly',
+  }[status] ?? status
 }
 
 function rainStatus(inches: number | null): 'ok' | 'warn' | 'danger' | 'unknown' {
@@ -136,23 +142,47 @@ export default function App() {
             {/* Signal grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Swim Guide */}
-              <SignalCard
-                title="Swim Guide (Bacteria)"
-                icon="🦠"
-                status={swimguideStatus(data.swimguide.status)}
-                primary={swimguideLabel(data.swimguide.status)}
-                secondary={
-                  data.swimguide.beaches.length > 0
-                    ? data.swimguide.beaches.map((b) => b.name).join(', ')
-                    : undefined
-                }
-                detail={
-                  data.swimguide.error
-                    ? 'API unavailable — using last known data'
-                    : `${data.swimguide.beaches.length} station(s) checked`
-                }
-                note="Highest-weight safety signal"
-              />
+              {data.swimguide.status === 'api_unavailable' ? (
+                <div className="rounded-xl border border-slate-700 bg-surface-card p-4 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🦠</span>
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        Swim Guide (Bacteria)
+                      </span>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-slate-500 flex-shrink-0" />
+                  </div>
+                  <div className="text-sm text-slate-300 leading-relaxed">
+                    Swim Guide API requires a partner key.{' '}
+                    <a
+                      href={data.swimguide.source_url ?? 'https://soundrivers.org/swim-guide/'}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-400 underline hover:text-blue-300"
+                    >
+                      Check Sound Rivers directly →
+                    </a>
+                  </div>
+                  <div className="text-xs text-slate-600 border-t border-surface-border pt-2 italic">
+                    Rainfall signals below serve as the bacteria proxy
+                  </div>
+                </div>
+              ) : (
+                <SignalCard
+                  title="Swim Guide (Bacteria)"
+                  icon="🦠"
+                  status={swimguideStatus(data.swimguide.status)}
+                  primary={swimguideLabel(data.swimguide.status)}
+                  secondary={
+                    data.swimguide.beaches.length > 0
+                      ? data.swimguide.beaches.map((b) => b.name).join(', ')
+                      : undefined
+                  }
+                  detail={`${data.swimguide.beaches.length} station(s) checked`}
+                  note="Highest-weight safety signal"
+                />
+              )}
 
               {/* Rainfall 24h */}
               <SignalCard
@@ -215,9 +245,10 @@ export default function App() {
                       : data.water_temp_f >= 65
                       ? 'Moderate'
                       : 'Cool'
-                    : undefined
+                    : 'No USGS sensor on Trent River'
                 }
-                detail="USGS in-river sensor"
+                detail={data.water_temp_source ?? 'NOAA CO-OPS coastal proxy'}
+                note="No water temp sensor on any Trent River USGS gauge"
               />
 
               {/* Wind */}
