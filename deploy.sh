@@ -6,13 +6,13 @@ IMAGE="ghcr.io/${GITHUB_USER}/water"
 TAG="${1:-latest}"
 NAMESPACE="water"
 
-# ── GitHub token (keychain → env → fail) ─────────────────────────────────────
+# ── GitHub PAT with write:packages scope (env → sibling .env files → fail) ───
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  GITHUB_TOKEN="$(git credential-osxkeychain get <<< $'host=github.com\nprotocol=https\n' 2>/dev/null | grep '^password=' | cut -d= -f2)" || true
+  # Try the market-sentiment-tracker .env which holds the packages-scoped PAT
+  GITHUB_TOKEN="$(grep '^GITHUB_TOKEN=' "$(dirname "$0")/../market-sentiment-tracker/.env" 2>/dev/null | cut -d= -f2)" || true
 fi
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "ERROR: GITHUB_TOKEN not set and not found in keychain."
-  echo "  export GITHUB_TOKEN=<your token>  and re-run."
+  echo "ERROR: GITHUB_TOKEN not set. Export a PAT with write:packages scope."
   exit 1
 fi
 
@@ -25,8 +25,13 @@ docker buildx build \
   --platform linux/amd64 \
   -t "$IMAGE:$TAG" \
   -t "$IMAGE:latest" \
-  --push \
+  --load \
   .
+
+echo ""
+echo "→ Pushing $IMAGE:$TAG"
+docker push "$IMAGE:$TAG"
+[[ "$TAG" != "latest" ]] && docker push "$IMAGE:latest"
 
 echo ""
 echo "→ Applying k8s manifests"
