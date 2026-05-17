@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: water
+  namespace: water
+  labels:
+    app: water
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: water
+  template:
+    metadata:
+      labels:
+        app: water
+    spec:
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: water
+          image: ghcr.io/ceesco53/water:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: CACHE_TTL_SECONDS
+              value: "1800"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

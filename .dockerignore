@@ -1,0 +1,10 @@
+**/__pycache__
+**/*.pyc
+**/.env
+frontend/node_modules
+frontend/dist
+backend/.venv
+.git
+.github
+k8s
+*.md
