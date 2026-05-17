@@ -31,7 +31,11 @@ export interface Conditions {
     status: 'safe' | 'unsafe' | 'caution' | 'unknown' | 'api_unavailable'
     beaches: Beach[]
     source_url?: string
+    source?: string
     error?: string
+    latest_mpn?: number | null
+    latest_date?: string | null
+    age_days?: number | null
   }
   weather: {
     rain_24h_in: number | null

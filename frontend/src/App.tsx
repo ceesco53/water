@@ -141,7 +141,7 @@ export default function App() {
 
             {/* Signal grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Swim Guide */}
+              {/* Swim Guide / Bacteria */}
               {data.swimguide.status === 'api_unavailable' ? (
                 <div className="rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 flex flex-col gap-2">
                   <div className="flex items-center justify-between">
@@ -178,17 +178,31 @@ export default function App() {
                 </div>
               ) : (
                 <SignalCard
-                  title="Swim Guide (Bacteria)"
+                  title={data.swimguide.source ? 'Bacteria (NC BEACH / C99)' : 'Swim Guide (Bacteria)'}
                   icon="🦠"
                   status={swimguideStatus(data.swimguide.status)}
-                  primary={swimguideLabel(data.swimguide.status)}
+                  primary={
+                    data.swimguide.latest_mpn != null
+                      ? `${data.swimguide.latest_mpn} MPN/100mL`
+                      : swimguideLabel(data.swimguide.status)
+                  }
                   secondary={
-                    data.swimguide.beaches.length > 0
+                    data.swimguide.latest_date != null
+                      ? `Sampled ${data.swimguide.latest_date}${data.swimguide.age_days != null ? ` · ${data.swimguide.age_days}d ago` : ''}`
+                      : data.swimguide.beaches.length > 0
                       ? data.swimguide.beaches.map((b) => b.name).join(', ')
                       : undefined
                   }
-                  detail={`${data.swimguide.beaches.length} station(s) checked`}
-                  note="Highest-weight safety signal"
+                  detail={
+                    data.swimguide.source
+                      ? 'EPA WQP · NC BEACH Program'
+                      : `${data.swimguide.beaches.length} station(s) checked`
+                  }
+                  note={
+                    data.swimguide.age_days != null && data.swimguide.age_days > 14
+                      ? `Sample ${data.swimguide.age_days}d old — check Sound Rivers for latest`
+                      : 'Threshold: 35 safe / 130 unsafe (MPN/100mL)'
+                  }
                 />
               )}
 

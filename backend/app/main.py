@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .scoring import compute_score
+from .services.bacteria import fetch_bacteria_wqp
 from .services.swimguide import fetch_swimguide_data
 from .services.usgs import fetch_usgs_data
 from .services.weather import fetch_weather_data
@@ -40,6 +41,20 @@ async def _build_conditions() -> dict:
         logger.error("Weather fetch failed: %s", weather_res)
         weather_res = {}
 
+    # When Swim Guide is unavailable, fall back to EPA WQP bacteria data (station C99)
+    if swimguide_res.get("status") == "api_unavailable":
+        try:
+            wqp_res = await fetch_bacteria_wqp()
+            if wqp_res.get("status") != "unknown":
+                swimguide_res = wqp_res
+                logger.info(
+                    "Using EPA WQP bacteria data: %s (age %d days)",
+                    wqp_res.get("latest_mpn"),
+                    wqp_res.get("age_days", 0),
+                )
+        except Exception as e:
+            logger.error("EPA WQP fallback failed: %s", e)
+
     upstream = usgs_res.get("02092500", {})
     local = usgs_res.get("02092576", {})
 
@@ -63,7 +78,11 @@ async def _build_conditions() -> dict:
             "status": swimguide_res.get("status", "unknown"),
             "beaches": swimguide_res.get("beaches", []),
             "source_url": swimguide_res.get("source_url"),
+            "source": swimguide_res.get("source"),
             "error": swimguide_res.get("error"),
+            "latest_mpn": swimguide_res.get("latest_mpn"),
+            "latest_date": swimguide_res.get("latest_date"),
+            "age_days": swimguide_res.get("age_days"),
         },
         "weather": {
             "rain_24h_in": rain_24h,
