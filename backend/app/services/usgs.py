@@ -8,7 +8,7 @@ USGS_BASE = "https://waterservices.usgs.gov/nwis/iv/"
 STATIONS = {
     "02092500": "Trent River near Trenton (upstream)",
     "02092576": "Trent River at Hwy 70, New Bern (local)",
-    "02092558": "Trent River near New Bern (secondary)",
+    # 02092558 omitted — station inactive since 1961, water-quality samples only, no real-time data
 }
 
 PARAM_NAMES = {

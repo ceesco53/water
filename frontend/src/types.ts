@@ -42,7 +42,6 @@ export interface Conditions {
   gauges: {
     upstream: Gauge
     local: Gauge
-    secondary: Gauge
   }
   water_temp_f: number | null
   water_temp_source: string | null

@@ -309,7 +309,6 @@ export default function App() {
             <GaugeSection
               upstream={data.gauges.upstream}
               local={data.gauges.local}
-              secondary={data.gauges.secondary}
             />
 
             {/* Swim Guide beaches */}

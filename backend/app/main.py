@@ -42,7 +42,6 @@ async def _build_conditions() -> dict:
 
     upstream = usgs_res.get("02092500", {})
     local = usgs_res.get("02092576", {})
-    secondary = usgs_res.get("02092558", {})
 
     rain_24h = weather_res.get("rain_24h_in")
     rain_72h = weather_res.get("rain_72h_in")
@@ -87,13 +86,6 @@ async def _build_conditions() -> dict:
                 "description": "Closest gauge to River Bend",
                 "discharge_cfs": local.get("discharge_cfs"),
                 "gage_height_ft": local.get("gage_height_ft"),
-            },
-            "secondary": {
-                "site_code": "02092558",
-                "site_name": "Trent River near New Bern",
-                "description": "Secondary cross-check",
-                "discharge_cfs": secondary.get("discharge_cfs"),
-                "gage_height_ft": secondary.get("gage_height_ft"),
             },
         },
         "water_temp_f": weather_res.get("water_temp_f"),

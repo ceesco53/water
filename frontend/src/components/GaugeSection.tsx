@@ -3,7 +3,6 @@ import type { Gauge } from '../types'
 interface Props {
   upstream: Gauge
   local: Gauge
-  secondary: Gauge
 }
 
 function GaugeRow({ gauge }: { gauge: Gauge }) {
@@ -43,7 +42,7 @@ function GaugeRow({ gauge }: { gauge: Gauge }) {
   )
 }
 
-export function GaugeSection({ upstream, local, secondary }: Props) {
+export function GaugeSection({ upstream, local }: Props) {
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4">
       <div className="flex items-center gap-2 mb-3">
@@ -55,7 +54,6 @@ export function GaugeSection({ upstream, local, secondary }: Props) {
       <div>
         <GaugeRow gauge={upstream} />
         <GaugeRow gauge={local} />
-        <GaugeRow gauge={secondary} />
       </div>
       <div className="mt-3 text-xs text-slate-600">
         Yellow discharge = above 7-day 80th percentile (elevated runoff)
