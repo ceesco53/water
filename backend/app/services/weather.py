@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import math
 import logging
@@ -76,9 +77,54 @@ async def fetch_water_temp_f() -> dict:
 
 
 async def fetch_weather_data() -> dict:
-    rain_wind = await _fetch_rain_and_wind()
-    water_temp = await fetch_water_temp_f()
-    return {**rain_wind, **water_temp}
+    rain_wind, water_temp, forecast = await asyncio.gather(
+        _fetch_rain_and_wind(),
+        fetch_water_temp_f(),
+        _fetch_rain_forecast(),
+    )
+    return {**rain_wind, **water_temp, **forecast}
+
+
+async def _fetch_rain_forecast() -> dict:
+    """
+    Fetch NWS 7-day forecast for River Bend / New Bern and extract the peak
+    precipitation probability within the next 72 hours. Used to give a
+    forward-looking bacteria-risk warning (48–72h post-rain = peak contamination).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{NOAA_BASE}/gridpoints/MHX/45,74/forecast",
+                headers=NOAA_HEADERS,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning("NWS forecast fetch failed: %s", e)
+        return {"rain_forecast_pct": None, "rain_forecast_period": None}
+
+    periods = data.get("properties", {}).get("periods", [])
+    # First 6 periods ≈ 72h (day + night alternating ~12h each)
+    next_72h = periods[:6]
+
+    peak_pct = 0
+    peak_period_name = None
+    for period in next_72h:
+        prob = period.get("probabilityOfPrecipitation") or {}
+        val = prob.get("value") if isinstance(prob, dict) else None
+        if val is not None:
+            try:
+                pct = int(val)
+                if pct > peak_pct:
+                    peak_pct = pct
+                    peak_period_name = period.get("name")
+            except (ValueError, TypeError):
+                pass
+
+    return {
+        "rain_forecast_pct": peak_pct if peak_pct > 0 else None,
+        "rain_forecast_period": peak_period_name if peak_pct > 0 else None,
+    }
 
 
 async def _fetch_rain_and_wind() -> dict:

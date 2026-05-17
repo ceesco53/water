@@ -89,6 +89,8 @@ async def _build_conditions() -> dict:
             "rain_72h_in": rain_72h,
             "wind_speed_mph": weather_res.get("wind_speed_mph"),
             "wind_direction": weather_res.get("wind_direction"),
+            "rain_forecast_pct": weather_res.get("rain_forecast_pct"),
+            "rain_forecast_period": weather_res.get("rain_forecast_period"),
         },
         "gauges": {
             "upstream": {

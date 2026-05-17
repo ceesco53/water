@@ -42,6 +42,8 @@ export interface Conditions {
     rain_72h_in: number | null
     wind_speed_mph: number | null
     wind_direction: string | null
+    rain_forecast_pct: number | null
+    rain_forecast_period: string | null
   }
   gauges: {
     upstream: Gauge

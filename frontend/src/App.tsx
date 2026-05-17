@@ -178,7 +178,7 @@ export default function App() {
                 </div>
               ) : (
                 <SignalCard
-                  title={data.swimguide.source ? 'Bacteria (NC BEACH / C99)' : 'Swim Guide (Bacteria)'}
+                  title={data.swimguide.source ? 'Bacteria (NC BEACH)' : 'Swim Guide (Bacteria)'}
                   icon="🦠"
                   status={swimguideStatus(data.swimguide.status)}
                   primary={
@@ -187,21 +187,21 @@ export default function App() {
                       : swimguideLabel(data.swimguide.status)
                   }
                   secondary={
-                    data.swimguide.latest_date != null
+                    data.swimguide.beaches.length > 1
+                      ? `${data.swimguide.beaches.length} sites — worst shown`
+                      : data.swimguide.latest_date != null
                       ? `Sampled ${data.swimguide.latest_date}${data.swimguide.age_days != null ? ` · ${data.swimguide.age_days}d ago` : ''}`
-                      : data.swimguide.beaches.length > 0
-                      ? data.swimguide.beaches.map((b) => b.name).join(', ')
                       : undefined
                   }
                   detail={
                     data.swimguide.source
-                      ? 'EPA WQP · NC BEACH Program'
+                      ? 'EPA WQP · NC BEACH Program (C99 + C100A)'
                       : `${data.swimguide.beaches.length} station(s) checked`
                   }
                   note={
                     data.swimguide.age_days != null && data.swimguide.age_days > 14
-                      ? `Sample ${data.swimguide.age_days}d old — check Sound Rivers for latest`
-                      : 'Threshold: 35 safe / 130 unsafe (MPN/100mL)'
+                      ? `Data ${data.swimguide.age_days}d old — Sound Rivers season opens May 22`
+                      : '≤35 safe · 35–130 caution · >130 unsafe (MPN/100mL)'
                   }
                 />
               )}
@@ -244,6 +244,35 @@ export default function App() {
                     : 'Dry period — low risk'
                 }
                 note="48–72h post-rain = peak risk in eastern NC"
+              />
+
+              {/* Rain forecast */}
+              <SignalCard
+                title="Rain Forecast (72h)"
+                icon="📅"
+                status={
+                  data.weather.rain_forecast_pct == null
+                    ? 'unknown'
+                    : data.weather.rain_forecast_pct >= 60
+                    ? 'warn'
+                    : data.weather.rain_forecast_pct >= 30
+                    ? 'warn'
+                    : 'ok'
+                }
+                primary={
+                  data.weather.rain_forecast_pct != null
+                    ? `${data.weather.rain_forecast_pct}% chance`
+                    : 'No forecast'
+                }
+                secondary={
+                  data.weather.rain_forecast_pct != null && data.weather.rain_forecast_pct >= 30
+                    ? `${data.weather.rain_forecast_period} — bacteria risk elevated 48–72h after`
+                    : data.weather.rain_forecast_pct != null
+                    ? data.weather.rain_forecast_period ?? 'Low rain risk ahead'
+                    : undefined
+                }
+                detail="NWS MHX · next 72h"
+                note="Plan swims before rain or 3+ days after"
               />
 
               {/* Water temp */}
