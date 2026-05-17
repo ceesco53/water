@@ -143,7 +143,7 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Swim Guide */}
               {data.swimguide.status === 'api_unavailable' ? (
-                <div className="rounded-xl border border-slate-700 bg-surface-card p-4 flex flex-col gap-2">
+                <div className="rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">🦠</span>
@@ -151,10 +151,18 @@ export default function App() {
                         Swim Guide (Bacteria)
                       </span>
                     </div>
-                    <span className="w-2 h-2 rounded-full bg-slate-500 flex-shrink-0" />
+                    <span className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
+                  </div>
+                  <div className="flex items-start gap-2 bg-blue-900/30 rounded-lg px-3 py-2">
+                    <span className="text-blue-300 mt-0.5">📅</span>
+                    <div>
+                      <div className="text-sm font-semibold text-blue-200">2026 season starts May 22</div>
+                      <div className="text-xs text-blue-400">
+                        50+ sites sampled weekly Thu–Fri, Memorial Day through Labor Day
+                      </div>
+                    </div>
                   </div>
                   <div className="text-sm text-slate-300 leading-relaxed">
-                    Swim Guide API requires a partner key.{' '}
                     <a
                       href={data.swimguide.source_url ?? 'https://soundrivers.org/swim-guide/'}
                       target="_blank"
@@ -165,7 +173,7 @@ export default function App() {
                     </a>
                   </div>
                   <div className="text-xs text-slate-600 border-t border-surface-border pt-2 italic">
-                    Rainfall signals below serve as the bacteria proxy
+                    Until then, rainfall signals below serve as the bacteria proxy
                   </div>
                 </div>
               ) : (
