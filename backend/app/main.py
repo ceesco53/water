@@ -56,13 +56,14 @@ async def _build_conditions() -> dict:
             logger.error("EPA WQP fallback failed: %s", e)
 
     upstream = usgs_res.get("02092500", {})
-    local = usgs_res.get("02092576", {})
+    local = usgs_res.get("02092554", {})
 
     rain_24h = weather_res.get("rain_24h_in")
     rain_72h = weather_res.get("rain_72h_in")
 
     score, rating, color, factors = compute_score(
         swimguide_status=swimguide_res.get("status", "unknown"),
+        bacteria_source=swimguide_res.get("source"),
         rain_24h_in=rain_24h,
         rain_72h_in=rain_72h,
         upstream_discharge_cfs=upstream.get("discharge_cfs"),
@@ -96,15 +97,15 @@ async def _build_conditions() -> dict:
             "upstream": {
                 "site_code": "02092500",
                 "site_name": "Trent River near Trenton",
-                "description": "Upstream freshwater — runoff indicator",
+                "description": "~17 mi upstream — runoff indicator; discharge feeds the score",
                 "discharge_cfs": upstream.get("discharge_cfs"),
                 "gage_height_ft": upstream.get("gage_height_ft"),
                 "discharge_p80": upstream.get("discharge_cfs_p80"),
             },
             "local": {
-                "site_code": "02092576",
-                "site_name": "Trent at Hwy 70, New Bern",
-                "description": "Closest gauge to River Bend",
+                "site_code": "02092554",
+                "site_name": "Trent River at Pollocksville",
+                "description": "Closest active gauge to River Bend (~6 mi upstream) — stage only, no discharge sensor",
                 "discharge_cfs": local.get("discharge_cfs"),
                 "gage_height_ft": local.get("gage_height_ft"),
             },

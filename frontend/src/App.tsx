@@ -39,12 +39,46 @@ function windStatus(mph: number | null): 'ok' | 'warn' | 'danger' | 'unknown' {
   return 'ok'
 }
 
+function memorialDay(year: number): Date {
+  const d = new Date(Date.UTC(year, 4, 31)) // May 31
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)) // back up to Monday
+  return d
+}
+
+function laborDay(year: number): Date {
+  const d = new Date(Date.UTC(year, 8, 1)) // Sep 1
+  d.setUTCDate(d.getUTCDate() + ((8 - d.getUTCDay()) % 7)) // forward to Monday
+  return d
+}
+
+function formatMonthDay(d: Date): string {
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })
+}
+
+// Sound Rivers samples 50+ Trent/Neuse sites weekly, Memorial Day through Labor
+// Day. Derived from the federal holidays (rather than a hardcoded date) so this
+// doesn't quietly go stale — a fixed "season starts May 22" string reads as a
+// live outage once that date has passed, which it always eventually does.
+function swimSeasonInfo(now: Date): { inSeason: boolean; label: string } {
+  const year = now.getUTCFullYear()
+  const start = memorialDay(year)
+  const end = laborDay(year)
+  if (now < start) {
+    return { inSeason: false, label: `Season opens Memorial Day (${formatMonthDay(start)})` }
+  }
+  if (now > end) {
+    return { inSeason: false, label: `Season ended Labor Day (${formatMonthDay(end)}) — resumes next Memorial Day` }
+  }
+  return { inSeason: true, label: `In season through Labor Day (${formatMonthDay(end)})` }
+}
+
 export default function App() {
   const [data, setData] = useState<Conditions | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const season = swimSeasonInfo(new Date())
 
   const load = useCallback(async () => {
     try {
@@ -156,7 +190,9 @@ export default function App() {
                   <div className="flex items-start gap-2 bg-blue-900/30 rounded-lg px-3 py-2">
                     <span className="text-blue-300 mt-0.5">📅</span>
                     <div>
-                      <div className="text-sm font-semibold text-blue-200">2026 season starts May 22</div>
+                      <div className="text-sm font-semibold text-blue-200">
+                        {season.inSeason ? 'In season now' : season.label}
+                      </div>
                       <div className="text-xs text-blue-400">
                         50+ sites sampled weekly Thu–Fri, Memorial Day through Labor Day
                       </div>
@@ -173,7 +209,9 @@ export default function App() {
                     </a>
                   </div>
                   <div className="text-xs text-slate-600 border-t border-surface-border pt-2 italic">
-                    Until then, rainfall signals below serve as the bacteria proxy
+                    {season.inSeason
+                      ? 'No sample on file right now — rainfall signals below serve as the bacteria proxy'
+                      : 'Until then, rainfall signals below serve as the bacteria proxy'}
                   </div>
                 </div>
               ) : (
@@ -187,10 +225,10 @@ export default function App() {
                       : swimguideLabel(data.swimguide.status)
                   }
                   secondary={
-                    data.swimguide.beaches.length > 1
-                      ? `${data.swimguide.beaches.length} sites — worst shown`
-                      : data.swimguide.latest_date != null
+                    data.swimguide.latest_date != null
                       ? `Sampled ${data.swimguide.latest_date}${data.swimguide.age_days != null ? ` · ${data.swimguide.age_days}d ago` : ''}`
+                      : data.swimguide.beaches.length > 1
+                      ? `${data.swimguide.beaches.length} sites — worst shown`
                       : undefined
                   }
                   detail={
@@ -200,7 +238,9 @@ export default function App() {
                   }
                   note={
                     data.swimguide.age_days != null && data.swimguide.age_days > 14
-                      ? `Data ${data.swimguide.age_days}d old — Sound Rivers season opens May 22`
+                      ? season.inSeason
+                        ? `Data ${data.swimguide.age_days}d old — EPA's feed lags; check soundrivers.org for this week's sample`
+                        : `Data ${data.swimguide.age_days}d old — Sound Rivers is off-season`
                       : '≤35 safe · 35–130 caution · >130 unsafe (MPN/100mL)'
                   }
                 />

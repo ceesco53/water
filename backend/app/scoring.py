@@ -7,29 +7,35 @@ def compute_score(
     rain_72h_in: Optional[float],
     upstream_discharge_cfs: Optional[float],
     upstream_discharge_p80: Optional[float],
+    bacteria_source: Optional[str] = None,
 ) -> tuple[int, str, str, list[dict]]:
     score = 100
     factors: list[dict] = []
+
+    # Label reflects which source actually produced swimguide_status — when Swim
+    # Guide itself is unavailable, main.py falls back to EPA WQP and bacteria_source
+    # is set, but the status codes below still mean the same thing either way.
+    bacteria_label = "Bacteria (NC BEACH)" if bacteria_source else "Bacteria (Swim Guide)"
 
     # Bacteria — highest weight, primary safety signal
     # api_unavailable = partner key required (not a water quality issue — no penalty)
     if swimguide_status == "unsafe":
         score -= 60
-        factors.append({"label": "Bacteria (Swim Guide)", "impact": -60,
+        factors.append({"label": bacteria_label, "impact": -60,
                          "reason": "Active unsafe advisory — do not swim"})
     elif swimguide_status == "caution":
         score -= 30
-        factors.append({"label": "Bacteria (Swim Guide)", "impact": -30,
+        factors.append({"label": bacteria_label, "impact": -30,
                          "reason": "Caution advisory in effect"})
     elif swimguide_status == "api_unavailable":
-        factors.append({"label": "Bacteria (Swim Guide)", "impact": 0,
+        factors.append({"label": bacteria_label, "impact": 0,
                          "reason": "API requires partner key — check Sound Rivers directly"})
     elif swimguide_status == "unknown":
         score -= 5
-        factors.append({"label": "Bacteria (Swim Guide)", "impact": -5,
+        factors.append({"label": bacteria_label, "impact": -5,
                          "reason": "No recent sampling data available"})
     else:
-        factors.append({"label": "Bacteria (Swim Guide)", "impact": 0,
+        factors.append({"label": bacteria_label, "impact": 0,
                          "reason": "Safe — bacteria levels acceptable"})
 
     # Rainfall 24h — runoff contamination risk

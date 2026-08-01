@@ -87,14 +87,21 @@ async def fetch_weather_data() -> dict:
 
 async def _fetch_rain_forecast() -> dict:
     """
-    Fetch NWS 7-day forecast for River Bend / New Bern and extract the peak
-    precipitation probability within the next 72 hours. Used to give a
-    forward-looking bacteria-risk warning (48–72h post-rain = peak contamination).
+    Fetch NWS 7-day forecast for River Bend's own 2.5km grid cell and extract
+    the peak precipitation probability within the next 72 hours. Used to give
+    a forward-looking bacteria-risk warning (48–72h post-rain = peak
+    contamination).
+
+    Grid cell MHX/41,72 was resolved via api.weather.gov/points/35.0728,-77.1485
+    (River Bend town hall). The previous MHX/45,74 is downtown New Bern at the
+    Neuse/Trent confluence — a different grid cell, ~4mi away, whose forecast
+    can diverge from River Bend's during the small-scale pop-up convection
+    that drives most summer rain in coastal NC.
     """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{NOAA_BASE}/gridpoints/MHX/45,74/forecast",
+                f"{NOAA_BASE}/gridpoints/MHX/41,72/forecast",
                 headers=NOAA_HEADERS,
             )
             resp.raise_for_status()
