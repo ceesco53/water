@@ -23,7 +23,12 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # The default GITHUB_TOKEN 403s pushing to this package: it was first
+          # published via a personal PAT rather than by this workflow, so GHCR
+          # never linked the package to the repo for the auto-token's write
+          # access. A personal PAT with write:packages, scoped to the package
+          # owner's own account, sidesteps that repo-linkage requirement.
+          password: ${{ secrets.PACKAGES_PAT }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
