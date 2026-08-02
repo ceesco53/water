@@ -108,7 +108,7 @@ async def fetch_bacteria_wqp() -> dict:
         return {
             "status": "unknown",
             "beaches": [],
-            "source": "EPA WQP",
+            "source": "NC BEACH",
             "source_url": "https://www.waterqualitydata.us/",
         }
 
@@ -116,7 +116,7 @@ async def fetch_bacteria_wqp() -> dict:
         "status": worst_status,
         "beaches": beaches,
         "source_url": "https://www.waterqualitydata.us/",
-        "source": "EPA WQP / NC BEACH Program",
+        "source": "NC BEACH",
         "latest_mpn": worst_mpn,
         "latest_date": worst_date,
         "age_days": worst_age,

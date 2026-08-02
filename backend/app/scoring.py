@@ -12,10 +12,13 @@ def compute_score(
     score = 100
     factors: list[dict] = []
 
-    # Label reflects which source actually produced swimguide_status — when Swim
-    # Guide itself is unavailable, main.py falls back to EPA WQP and bacteria_source
-    # is set, but the status codes below still mean the same thing either way.
-    bacteria_label = "Bacteria (NC BEACH)" if bacteria_source else "Bacteria (Swim Guide)"
+    # Label reflects which source actually produced swimguide_status — main.py
+    # falls back from Swim Guide to a Sound Rivers page scrape to EPA WQP, but
+    # the status codes below mean the same thing regardless of source.
+    bacteria_label = {
+        "Sound Rivers": "Bacteria (Sound Rivers)",
+        "NC BEACH": "Bacteria (NC BEACH)",
+    }.get(bacteria_source, "Bacteria (Swim Guide)")
 
     # Bacteria — highest weight, primary safety signal
     # api_unavailable = partner key required (not a water quality issue — no penalty)

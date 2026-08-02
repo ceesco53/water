@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .scoring import compute_score
 from .services.bacteria import fetch_bacteria_wqp
+from .services.soundrivers import fetch_soundrivers_page
 from .services.swimguide import fetch_swimguide_data
 from .services.usgs import fetch_usgs_data
 from .services.weather import fetch_weather_data
@@ -41,19 +42,35 @@ async def _build_conditions() -> dict:
         logger.error("Weather fetch failed: %s", weather_res)
         weather_res = {}
 
-    # When Swim Guide is unavailable, fall back to EPA WQP bacteria data (station C99)
+    # Swim Guide's API needs a partner key we don't have. Fall back first to
+    # Sound Rivers' own swim-guide page (scraped — covers River Bend itself
+    # and nearby Trent sites), then to EPA WQP (Neuse River sites several
+    # miles away, but a stable federal API with no scrape-fragility risk).
     if swimguide_res.get("status") == "api_unavailable":
         try:
-            wqp_res = await fetch_bacteria_wqp()
-            if wqp_res.get("status") != "unknown":
-                swimguide_res = wqp_res
+            sr_res = await fetch_soundrivers_page()
+            if sr_res.get("status") != "unknown":
+                swimguide_res = sr_res
                 logger.info(
-                    "Using EPA WQP bacteria data: %s (age %d days)",
-                    wqp_res.get("latest_mpn"),
-                    wqp_res.get("age_days", 0),
+                    "Using Sound Rivers page data: %s (week of %s)",
+                    sr_res.get("status"),
+                    sr_res.get("latest_date"),
                 )
         except Exception as e:
-            logger.error("EPA WQP fallback failed: %s", e)
+            logger.error("Sound Rivers page fallback failed: %s", e)
+
+        if swimguide_res.get("status") == "api_unavailable":
+            try:
+                wqp_res = await fetch_bacteria_wqp()
+                if wqp_res.get("status") != "unknown":
+                    swimguide_res = wqp_res
+                    logger.info(
+                        "Using EPA WQP bacteria data: %s (age %d days)",
+                        wqp_res.get("latest_mpn"),
+                        wqp_res.get("age_days", 0),
+                    )
+            except Exception as e:
+                logger.error("EPA WQP fallback failed: %s", e)
 
     upstream = usgs_res.get("02092500", {})
     local = usgs_res.get("02092554", {})

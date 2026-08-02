@@ -26,6 +26,45 @@ function swimguideLabel(status: string) {
   }[status] ?? status
 }
 
+type BacteriaInfo = Conditions['swimguide']
+
+// Swim Guide's own API needs a partner key we don't have, so main.py falls
+// back first to a scrape of Sound Rivers' weekly pass/fail page (covers River
+// Bend itself), then to EPA WQP (Neuse River sites several miles away). Each
+// source has a different shape — Sound Rivers has no numeric bacteria value,
+// EPA WQP is often months stale — so the card needs to say which is showing.
+function bacteriaTitle(source: BacteriaInfo['source']): string {
+  if (source === 'Sound Rivers') return 'Bacteria (Sound Rivers)'
+  if (source === 'NC BEACH') return 'Bacteria (NC BEACH)'
+  return 'Swim Guide (Bacteria)'
+}
+
+function bacteriaDetail(swimguide: BacteriaInfo): string {
+  if (swimguide.source === 'Sound Rivers') {
+    const extra = Math.max(swimguide.beaches.length - 1, 0)
+    return extra > 0
+      ? `soundrivers.org · River Bend + ${extra} nearby Trent site${extra === 1 ? '' : 's'}`
+      : 'soundrivers.org · River Bend'
+  }
+  if (swimguide.source === 'NC BEACH') return 'EPA WQP · NC BEACH Program (C99 + C100A)'
+  return `${swimguide.beaches.length} station(s) checked`
+}
+
+function bacteriaNote(swimguide: BacteriaInfo, inSeason: boolean): string {
+  const stale = swimguide.age_days != null && swimguide.age_days > 14
+  if (swimguide.source === 'Sound Rivers') {
+    return stale
+      ? `Data ${swimguide.age_days}d old — check soundrivers.org for a fresher update`
+      : 'Pass/fail weekly report — no numeric bacteria value from this source'
+  }
+  if (swimguide.source === 'NC BEACH' && stale) {
+    return inSeason
+      ? `Data ${swimguide.age_days}d old — EPA's feed lags; check soundrivers.org for this week's sample`
+      : `Data ${swimguide.age_days}d old — Sound Rivers is off-season`
+  }
+  return '≤35 safe · 35–130 caution · >130 unsafe (MPN/100mL)'
+}
+
 function rainStatus(inches: number | null): 'ok' | 'warn' | 'danger' | 'unknown' {
   if (inches == null) return 'unknown'
   if (inches > 1.0) return 'danger'
@@ -216,7 +255,7 @@ export default function App() {
                 </div>
               ) : (
                 <SignalCard
-                  title={data.swimguide.source ? 'Bacteria (NC BEACH)' : 'Swim Guide (Bacteria)'}
+                  title={bacteriaTitle(data.swimguide.source)}
                   icon="🦠"
                   status={swimguideStatus(data.swimguide.status)}
                   primary={
@@ -231,18 +270,8 @@ export default function App() {
                       ? `${data.swimguide.beaches.length} sites — worst shown`
                       : undefined
                   }
-                  detail={
-                    data.swimguide.source
-                      ? 'EPA WQP · NC BEACH Program (C99 + C100A)'
-                      : `${data.swimguide.beaches.length} station(s) checked`
-                  }
-                  note={
-                    data.swimguide.age_days != null && data.swimguide.age_days > 14
-                      ? season.inSeason
-                        ? `Data ${data.swimguide.age_days}d old — EPA's feed lags; check soundrivers.org for this week's sample`
-                        : `Data ${data.swimguide.age_days}d old — Sound Rivers is off-season`
-                      : '≤35 safe · 35–130 caution · >130 unsafe (MPN/100mL)'
-                  }
+                  detail={bacteriaDetail(data.swimguide)}
+                  note={bacteriaNote(data.swimguide, season.inSeason)}
                 />
               )}
 

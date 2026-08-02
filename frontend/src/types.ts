@@ -31,7 +31,7 @@ export interface Conditions {
     status: 'safe' | 'unsafe' | 'caution' | 'unknown' | 'api_unavailable'
     beaches: Beach[]
     source_url?: string
-    source?: string
+    source?: 'NC BEACH' | 'Sound Rivers'
     error?: string
     latest_mpn?: number | null
     latest_date?: string | null
