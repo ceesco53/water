@@ -134,26 +134,66 @@ async def _fetch_rain_forecast() -> dict:
     }
 
 
+async def _fetch_observations(client: httpx.AsyncClient, max_pages: int = 3) -> list[dict]:
+    """
+    KEWN (an augmented ASOS) reports roughly every 5 minutes, not hourly, and
+    this endpoint caps at 500 observations per page — one page only reaches
+    back about 40 hours. A single-page fetch (the previous `limit=73` reached
+    back barely 6-8 hours) silently truncated the "72h" rainfall window to
+    whatever the last few hours happened to be, which is how confirmed
+    same-day rain could still show 0.00in. Page through pagination.next until
+    72h of coverage is reached (typically 2 pages).
+    """
+    all_features: list[dict] = []
+    url = f"{NOAA_BASE}/stations/{NOAA_STATION}/observations"
+    params: dict | None = {"limit": 500}
+    now = datetime.now(timezone.utc)
+
+    for _ in range(max_pages):
+        resp = await client.get(url, params=params, headers=NOAA_HEADERS)
+        resp.raise_for_status()
+        data = resp.json()
+        features = data.get("features", [])
+        all_features.extend(features)
+
+        timestamps = [
+            f["properties"]["timestamp"]
+            for f in features
+            if f.get("properties", {}).get("timestamp")
+        ]
+        if not timestamps:
+            break
+        oldest = min(datetime.fromisoformat(t.replace("Z", "+00:00")) for t in timestamps)
+        if (now - oldest).total_seconds() / 3600 >= 73:
+            break
+
+        next_url = data.get("pagination", {}).get("next")
+        if not next_url:
+            break
+        url, params = next_url, None
+
+    return all_features
+
+
 async def _fetch_rain_and_wind() -> dict:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{NOAA_BASE}/stations/{NOAA_STATION}/observations",
-                params={"limit": 73},
-                headers=NOAA_HEADERS,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            features = await _fetch_observations(client)
     except Exception as e:
         logger.warning("NOAA weather API failed: %s", e)
         return {"error": str(e), "rain_24h_in": None, "rain_72h_in": None,
                 "wind_speed_mph": None, "wind_direction": None}
 
-    features = data.get("features", [])
     now = datetime.now(timezone.utc)
 
-    rain_24h_mm = 0.0
-    rain_72h_mm = 0.0
+    # precipitationLastHour is a rolling 60-minute accumulator, refreshed on
+    # roughly every 5-minute observation during active rain — summing every
+    # reading directly counts the same rain many times over, since readings
+    # 5 minutes apart share ~55 minutes of overlap. Instead, chain together
+    # readings less than 60 minutes apart (the only way their windows can
+    # overlap) into one burst and take that burst's peak reading, which is
+    # its best available total.
+    readings: list[tuple[datetime, float]] = []
     wind_speed_mph = None
     wind_direction = None
     latest_set = False
@@ -166,7 +206,6 @@ async def _fetch_rain_and_wind() -> dict:
 
         try:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            age_hours = (now - ts).total_seconds() / 3600
         except Exception:
             continue
 
@@ -176,10 +215,7 @@ async def _fetch_rain_and_wind() -> dict:
             try:
                 v = float(precip_val)
                 if not math.isnan(v) and v >= 0:
-                    if age_hours <= 24:
-                        rain_24h_mm += v
-                    if age_hours <= 72:
-                        rain_72h_mm += v
+                    readings.append((ts, v))
             except (ValueError, TypeError):
                 pass
 
@@ -203,6 +239,24 @@ async def _fetch_rain_and_wind() -> dict:
 
             if wind_speed_mph is not None:
                 latest_set = True
+
+    readings.sort(key=lambda r: r[0])
+    bursts: list[list[tuple[datetime, float]]] = []
+    for ts, v in readings:
+        if bursts and (ts - bursts[-1][-1][0]).total_seconds() <= 3600:
+            bursts[-1].append((ts, v))
+        else:
+            bursts.append([(ts, v)])
+
+    rain_24h_mm = 0.0
+    rain_72h_mm = 0.0
+    for burst in bursts:
+        peak_ts, peak_val = max(burst, key=lambda r: r[1])
+        age_hours = (now - peak_ts).total_seconds() / 3600
+        if age_hours <= 24:
+            rain_24h_mm += peak_val
+        if age_hours <= 72:
+            rain_72h_mm += peak_val
 
     return {
         "rain_24h_in": round(_mm_to_in(rain_24h_mm), 2),
