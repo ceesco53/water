@@ -8,10 +8,15 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .scoring import compute_score
-from .services.bacteria import fetch_bacteria_wqp
+from .scoring import (
+    BACTERIA_FULL_WEIGHT_DAYS,
+    compute_score,
+    select_bacteria_reading,
+    vibrio_risk,
+)
+from .services.ncdeq_events import LOOKBACK_DAYS, RADIUS_MI, fetch_sewer_spills, fetch_water_incidents
+from .services.ncdeq_rwq import fetch_ncdeq_rwq
 from .services.soundrivers import fetch_soundrivers_page
-from .services.swimguide import fetch_swimguide_data
 from .services.usgs import fetch_usgs_data
 from .services.weather import fetch_weather_data
 
@@ -21,70 +26,85 @@ logger = logging.getLogger(__name__)
 CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "1800"))
 _cache: dict = {}
 
+# DEQ measures salinity at each bacteria sample; it shifts with river flow,
+# so an older reading is still a fair guide for the Vibrio indicator.
+_SALINITY_MAX_AGE_DAYS = 21
+
 app = FastAPI(title="River Bend Water Monitor", version="1.0.0")
 
 
+def _or_default(result, name: str, default):
+    if isinstance(result, Exception):
+        logger.error("%s fetch failed: %s", name, result)
+        return default
+    return result
+
+
+def _freshest(readings: list[dict], field: str, max_age_days: int):
+    """Newest DEQ reading carrying `field`, if one is recent enough."""
+    candidates = [
+        r for r in readings
+        if r.get(field) is not None and r["age_days"] <= max_age_days
+    ]
+    return min(candidates, key=lambda r: r["age_days"]) if candidates else None
+
+
 async def _build_conditions() -> dict:
-    usgs_res, swimguide_res, weather_res = await asyncio.gather(
+    usgs_res, weather_res, sr_res, deq_res, incidents, spills = await asyncio.gather(
         fetch_usgs_data(),
-        fetch_swimguide_data(),
         fetch_weather_data(),
+        fetch_soundrivers_page(),
+        fetch_ncdeq_rwq(),
+        fetch_water_incidents(),
+        fetch_sewer_spills(),
         return_exceptions=True,
     )
+    usgs_res = _or_default(usgs_res, "USGS", {})
+    weather_res = _or_default(weather_res, "Weather", {})
+    sr_res = _or_default(sr_res, "Sound Rivers", [])
+    deq_res = _or_default(deq_res, "NC DEQ swim sampling", [])
+    incidents = _or_default(incidents, "NC DEQ fish kills", None)
+    spills = _or_default(spills, "NC DEQ sewer spills", None)
 
-    if isinstance(usgs_res, Exception):
-        logger.error("USGS fetch failed: %s", usgs_res)
-        usgs_res = {}
-    if isinstance(swimguide_res, Exception):
-        logger.error("SwimGuide fetch failed: %s", swimguide_res)
-        swimguide_res = {"status": "unknown", "beaches": []}
-    if isinstance(weather_res, Exception):
-        logger.error("Weather fetch failed: %s", weather_res)
-        weather_res = {}
+    # Sound Rivers samples River Bend itself, weekly, Memorial Day–Labor Day.
+    # NC DEQ samples Union Point at the mouth of the Trent year-round. The
+    # freshest current result wins (see select_bacteria_reading) rather than
+    # a fixed source order.
+    readings = sr_res + deq_res
+    primary = select_bacteria_reading(readings)
 
-    # Swim Guide's API needs a partner key we don't have. Fall back first to
-    # Sound Rivers' own swim-guide page (scraped — covers River Bend itself
-    # and nearby Trent sites), then to EPA WQP (Neuse River sites several
-    # miles away, but a stable federal API with no scrape-fragility risk).
-    if swimguide_res.get("status") == "api_unavailable":
-        try:
-            sr_res = await fetch_soundrivers_page()
-            if sr_res.get("status") != "unknown":
-                swimguide_res = sr_res
-                logger.info(
-                    "Using Sound Rivers page data: %s (week of %s)",
-                    sr_res.get("status"),
-                    sr_res.get("latest_date"),
-                )
-        except Exception as e:
-            logger.error("Sound Rivers page fallback failed: %s", e)
+    # DEQ measures water temperature on site when it samples, which beats
+    # the Beaufort ocean-inlet proxy whenever that sample is recent.
+    temp_reading = _freshest(deq_res, "water_temp_f", BACTERIA_FULL_WEIGHT_DAYS)
+    if temp_reading:
+        water_temp_f = temp_reading["water_temp_f"]
+        water_temp_source = f"NC DEQ sample at {temp_reading['site_name'].split(',')[0]}"
+        water_temp_date = temp_reading["sample_date"]
+    else:
+        water_temp_f = weather_res.get("water_temp_f")
+        water_temp_source = weather_res.get("water_temp_source")
+        water_temp_date = None
 
-        if swimguide_res.get("status") == "api_unavailable":
-            try:
-                wqp_res = await fetch_bacteria_wqp()
-                if wqp_res.get("status") != "unknown":
-                    swimguide_res = wqp_res
-                    logger.info(
-                        "Using EPA WQP bacteria data: %s (age %d days)",
-                        wqp_res.get("latest_mpn"),
-                        wqp_res.get("age_days", 0),
-                    )
-            except Exception as e:
-                logger.error("EPA WQP fallback failed: %s", e)
+    salinity_reading = _freshest(deq_res, "salinity_ppt", _SALINITY_MAX_AGE_DAYS)
+    salinity_ppt = salinity_reading["salinity_ppt"] if salinity_reading else None
 
     upstream = usgs_res.get("02092500", {})
     local = usgs_res.get("02092554", {})
 
     rain_24h = weather_res.get("rain_24h_in")
     rain_72h = weather_res.get("rain_72h_in")
+    alerts = weather_res.get("alerts")
 
     score, rating, color, factors = compute_score(
-        swimguide_status=swimguide_res.get("status", "unknown"),
-        bacteria_source=swimguide_res.get("source"),
+        bacteria=primary,
         rain_24h_in=rain_24h,
         rain_72h_in=rain_72h,
         upstream_discharge_cfs=upstream.get("discharge_cfs"),
         upstream_discharge_p80=upstream.get("discharge_cfs_p80"),
+        nws_alerts=alerts,
+        thunder_pct_6h=weather_res.get("thunder_pct_6h"),
+        incidents=incidents,
+        sewer_spills=spills,
     )
 
     return {
@@ -92,15 +112,9 @@ async def _build_conditions() -> dict:
         "rating": rating,
         "rating_color": color,
         "score_factors": factors,
-        "swimguide": {
-            "status": swimguide_res.get("status", "unknown"),
-            "beaches": swimguide_res.get("beaches", []),
-            "source_url": swimguide_res.get("source_url"),
-            "source": swimguide_res.get("source"),
-            "error": swimguide_res.get("error"),
-            "latest_mpn": swimguide_res.get("latest_mpn"),
-            "latest_date": swimguide_res.get("latest_date"),
-            "age_days": swimguide_res.get("age_days"),
+        "bacteria": {
+            "primary": primary,
+            "readings": readings,
         },
         "weather": {
             "rain_24h_in": rain_24h,
@@ -109,7 +123,26 @@ async def _build_conditions() -> dict:
             "wind_direction": weather_res.get("wind_direction"),
             "rain_forecast_pct": weather_res.get("rain_forecast_pct"),
             "rain_forecast_period": weather_res.get("rain_forecast_period"),
+            "qpf_72h_in": weather_res.get("qpf_72h_in"),
+            "thunder_pct_6h": weather_res.get("thunder_pct_6h"),
+            "thunder_pct_24h": weather_res.get("thunder_pct_24h"),
         },
+        "alerts": alerts,
+        "reports": {
+            "radius_mi": RADIUS_MI,
+            "lookback_days": LOOKBACK_DAYS,
+            "incidents": incidents,
+            "sewer_spills": spills,
+        },
+        "water": {
+            "temp_f": water_temp_f,
+            "temp_source": water_temp_source,
+            "temp_date": water_temp_date,
+            "salinity_ppt": salinity_ppt,
+            "salinity_site": salinity_reading["site_name"] if salinity_reading else None,
+            "salinity_date": salinity_reading["sample_date"] if salinity_reading else None,
+        },
+        "vibrio": vibrio_risk(water_temp_f, salinity_ppt),
         "gauges": {
             "upstream": {
                 "site_code": "02092500",
@@ -127,8 +160,6 @@ async def _build_conditions() -> dict:
                 "gage_height_ft": local.get("gage_height_ft"),
             },
         },
-        "water_temp_f": weather_res.get("water_temp_f"),
-        "water_temp_source": weather_res.get("water_temp_source"),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -2,80 +2,92 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { formatDistanceToNow } from 'date-fns'
 import { fetchConditions, forceRefresh } from './api'
-import type { Conditions } from './types'
+import type { BacteriaReading, Conditions, SewerSpill } from './types'
+import { ago, shortDate } from './format'
 import { ScoreCard } from './components/ScoreCard'
 import { SignalCard } from './components/SignalCard'
 import { GaugeSection } from './components/GaugeSection'
+import { AlertsBanner } from './components/AlertsBanner'
+import { BacteriaSites } from './components/BacteriaSites'
+import { ReportsSection } from './components/ReportsSection'
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
 
-function swimguideStatus(status: string): 'ok' | 'warn' | 'danger' | 'unknown' {
+type StatusLevel = 'ok' | 'warn' | 'danger' | 'unknown'
+
+// Mirror backend scoring.py: bacteria results count fully for a week, half
+// for the second week, then not at all; reports count for 7d (fish kills,
+// blooms) or 5d (sewage spills that reached water).
+const BACTERIA_FULL_WEIGHT_DAYS = 7
+const BACTERIA_HALF_WEIGHT_DAYS = 14
+const INCIDENT_SCORE_DAYS = 7
+const SPILL_SCORE_DAYS = 5
+
+function bacteriaStatus(status: BacteriaReading['status']): StatusLevel {
   if (status === 'safe') return 'ok'
   if (status === 'caution') return 'warn'
   if (status === 'unsafe') return 'danger'
   return 'unknown'
 }
 
-function swimguideLabel(status: string) {
-  return {
-    safe: 'Safe',
-    caution: 'Caution',
-    unsafe: 'Unsafe',
-    unknown: 'Unknown',
-    api_unavailable: 'Check Directly',
-  }[status] ?? status
+function bacteriaLabel(status: BacteriaReading['status']): string {
+  return { safe: 'Safe', caution: 'Caution', unsafe: 'Unsafe', unknown: 'Unknown' }[status]
 }
 
-type BacteriaInfo = Conditions['swimguide']
-
-// Swim Guide's own API needs a partner key we don't have, so main.py falls
-// back first to a scrape of Sound Rivers' weekly pass/fail page (covers River
-// Bend itself), then to EPA WQP (Neuse River sites several miles away). Each
-// source has a different shape — Sound Rivers has no numeric bacteria value,
-// EPA WQP is often months stale — so the card needs to say which is showing.
-function bacteriaTitle(source: BacteriaInfo['source']): string {
-  if (source === 'Sound Rivers') return 'Bacteria (Sound Rivers)'
-  if (source === 'NC BEACH') return 'Bacteria (NC BEACH)'
-  return 'Swim Guide (Bacteria)'
+function bacteriaDetail(r: BacteriaReading): string {
+  if (r.source === 'Sound Rivers') return 'soundrivers.org · weekly pass/fail'
+  return [r.advisory && `DEQ: ${r.advisory}`, r.geomean_mpn != null && `30-day geomean ${r.geomean_mpn}`]
+    .filter(Boolean)
+    .join(' · ')
 }
 
-function bacteriaDetail(swimguide: BacteriaInfo): string {
-  if (swimguide.source === 'Sound Rivers') {
-    const extra = Math.max(swimguide.beaches.length - 1, 0)
-    return extra > 0
-      ? `soundrivers.org · River Bend + ${extra} nearby Trent site${extra === 1 ? '' : 's'}`
-      : 'soundrivers.org · River Bend'
+function bacteriaNote(r: BacteriaReading): string {
+  if (r.age_days != null && r.age_days > BACTERIA_HALF_WEIGHT_DAYS) {
+    return 'Too old to count in the score — rain and flow stand in'
   }
-  if (swimguide.source === 'NC BEACH') return 'EPA WQP · NC BEACH Program (C99 + C100A)'
-  return `${swimguide.beaches.length} station(s) checked`
+  if (r.age_days == null || r.age_days > BACTERIA_FULL_WEIGHT_DAYS) {
+    return 'Over a week old — counts half in the score'
+  }
+  if (r.source === 'NC DEQ') return 'NC standard: one sample ≥104 or 30-day geomean ≥35 MPN/100mL'
+  return 'Pass/fail weekly report — no numeric value from this source'
 }
 
-function bacteriaNote(swimguide: BacteriaInfo, inSeason: boolean): string {
-  const stale = swimguide.age_days != null && swimguide.age_days > 14
-  if (swimguide.source === 'Sound Rivers') {
-    return stale
-      ? `Data ${swimguide.age_days}d old — check soundrivers.org for a fresher update`
-      : 'Pass/fail weekly report — no numeric bacteria value from this source'
-  }
-  if (swimguide.source === 'NC BEACH' && stale) {
-    return inSeason
-      ? `Data ${swimguide.age_days}d old — EPA's feed lags; check soundrivers.org for this week's sample`
-      : `Data ${swimguide.age_days}d old — Sound Rivers is off-season`
-  }
-  return '≤35 safe · 35–130 caution · >130 unsafe (MPN/100mL)'
-}
-
-function rainStatus(inches: number | null): 'ok' | 'warn' | 'danger' | 'unknown' {
+function rainStatus(inches: number | null): StatusLevel {
   if (inches == null) return 'unknown'
   if (inches > 1.0) return 'danger'
   if (inches > 0.25) return 'warn'
   return 'ok'
 }
 
-function windStatus(mph: number | null): 'ok' | 'warn' | 'danger' | 'unknown' {
+// Same thresholds the 72h factor uses in scoring.py
+function rain72Status(inches: number | null): StatusLevel {
+  if (inches == null) return 'unknown'
+  if (inches > 2.0) return 'danger'
+  if (inches > 1.0) return 'warn'
+  return 'ok'
+}
+
+function windStatus(mph: number | null): StatusLevel {
   if (mph == null) return 'unknown'
   if (mph > 20) return 'warn'
   return 'ok'
+}
+
+function thunderStatus(pct: number | null): StatusLevel {
+  if (pct == null) return 'unknown'
+  if (pct >= 55) return 'danger'
+  if (pct >= 25) return 'warn'
+  return 'ok'
+}
+
+function vibrioStatus(level: Conditions['vibrio']['level']): StatusLevel {
+  return ({ high: 'danger', elevated: 'warn', low: 'ok', unknown: 'unknown' } as const)[level]
+}
+
+function forecastStatus(w: Conditions['weather']): StatusLevel {
+  if (w.qpf_72h_in != null) return rainStatus(w.qpf_72h_in)
+  if (w.rain_forecast_pct == null) return 'unknown'
+  return w.rain_forecast_pct >= 30 ? 'warn' : 'ok'
 }
 
 function memorialDay(year: number): Date {
@@ -109,6 +121,89 @@ function swimSeasonInfo(now: Date): { inSeason: boolean; label: string } {
     return { inSeason: false, label: `Season ended Labor Day (${formatMonthDay(end)}) — resumes next Memorial Day` }
   }
   return { inSeason: true, label: `In season through Labor Day (${formatMonthDay(end)})` }
+}
+
+function BacteriaCard({ primary }: { primary: BacteriaReading | null }) {
+  if (primary == null) {
+    return (
+      <SignalCard
+        title="Bacteria"
+        icon="🦠"
+        status="unknown"
+        primary="No data"
+        secondary="No Sound Rivers or NC DEQ results available"
+        detail="Check soundrivers.org/swim-guide or DEQ's advisory map"
+        note="Rain and flow signals stand in as the bacteria proxy"
+      />
+    )
+  }
+  const stale = primary.age_days != null && primary.age_days > BACTERIA_HALF_WEIGHT_DAYS
+  return (
+    <SignalCard
+      title={`Bacteria (${primary.source})`}
+      icon="🦠"
+      status={stale ? 'unknown' : bacteriaStatus(primary.status)}
+      primary={primary.mpn != null ? `${primary.mpn} MPN/100mL` : bacteriaLabel(primary.status)}
+      secondary={`${primary.site_name.split(',')[0]} · ${
+        primary.sample_date ? `${shortDate(primary.sample_date)} (${ago(primary.age_days)})` : 'date unknown'
+      }`}
+      detail={bacteriaDetail(primary)}
+      note={bacteriaNote(primary)}
+    />
+  )
+}
+
+function IncidentsCard({ reports }: { reports: Conditions['reports'] }) {
+  const incidents = reports.incidents
+  const scope = `NC DEQ · within ${reports.radius_mi} mi · last ${reports.lookback_days}d`
+  if (incidents == null) {
+    return <SignalCard title="Fish Kills & Blooms" icon="🐟" status="unknown" primary="Unavailable" detail="NC DEQ feed unreachable" />
+  }
+  const recentBloom = incidents.some((i) => i.algal_bloom && i.age_days <= INCIDENT_SCORE_DAYS)
+  const latest = incidents[0]
+  return (
+    <SignalCard
+      title="Fish Kills & Blooms"
+      icon="🐟"
+      status={recentBloom ? 'danger' : incidents.length > 0 ? 'warn' : 'ok'}
+      primary={incidents.length > 0 ? `${incidents.length} report${incidents.length === 1 ? '' : 's'}` : 'None'}
+      secondary={latest ? `Latest: ${latest.type} · ${shortDate(latest.date)}` : 'Nothing reported nearby'}
+      detail={scope}
+      note="Usually low-oxygen events; some blooms are toxic — avoid discolored water"
+    />
+  )
+}
+
+function SpillsCard({ reports }: { reports: Conditions['reports'] }) {
+  const spills = reports.sewer_spills
+  const scope = `NC DEQ · within ${reports.radius_mi} mi · last ${reports.lookback_days}d`
+  if (spills == null) {
+    return <SignalCard title="Sewage Spills" icon="🚱" status="unknown" primary="Unavailable" detail="NC DEQ feed unreachable" />
+  }
+  const gallons = (s: SewerSpill) => s.volume_reached_water_gal ?? s.volume_gal
+  const reached = spills.filter((s) => s.reached_water)
+  const scored = reached.some((s) => s.ongoing || s.age_days <= SPILL_SCORE_DAYS)
+  const worst = reached.length > 0
+    ? reached.reduce((a, b) => ((gallons(b) ?? 0) > (gallons(a) ?? 0) ? b : a))
+    : null
+  const worstGallons = worst ? gallons(worst) : null
+  return (
+    <SignalCard
+      title="Sewage Spills"
+      icon="🚱"
+      status={scored ? 'danger' : reached.length > 0 ? 'warn' : 'ok'}
+      primary={reached.length > 0 ? `${reached.length} reached water` : spills.length > 0 ? 'None reached water' : 'None'}
+      secondary={
+        worst
+          ? `${worstGallons != null ? `${worstGallons.toLocaleString()} gal · ` : ''}${worst.waterbody ?? 'surface water'} · ${shortDate(worst.date)}`
+          : spills.length > 0
+          ? `${spills.length} spill${spills.length === 1 ? '' : 's'} contained on land`
+          : 'Nothing reported nearby'
+      }
+      detail={scope}
+      note="Sewage reaching the river is a direct bacteria source"
+    />
+  )
 }
 
 export default function App() {
@@ -204,6 +299,9 @@ export default function App() {
 
         {data && (
           <>
+            {/* Active NWS alerts */}
+            {data.alerts && <AlertsBanner alerts={data.alerts} />}
+
             {/* Score card */}
             <ScoreCard
               score={data.score}
@@ -214,66 +312,7 @@ export default function App() {
 
             {/* Signal grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Swim Guide / Bacteria */}
-              {data.swimguide.status === 'api_unavailable' ? (
-                <div className="rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">🦠</span>
-                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                        Swim Guide (Bacteria)
-                      </span>
-                    </div>
-                    <span className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
-                  </div>
-                  <div className="flex items-start gap-2 bg-blue-900/30 rounded-lg px-3 py-2">
-                    <span className="text-blue-300 mt-0.5">📅</span>
-                    <div>
-                      <div className="text-sm font-semibold text-blue-200">
-                        {season.inSeason ? 'In season now' : season.label}
-                      </div>
-                      <div className="text-xs text-blue-400">
-                        50+ sites sampled weekly Thu–Fri, Memorial Day through Labor Day
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-sm text-slate-300 leading-relaxed">
-                    <a
-                      href={data.swimguide.source_url ?? 'https://soundrivers.org/swim-guide/'}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-400 underline hover:text-blue-300"
-                    >
-                      Check Sound Rivers directly →
-                    </a>
-                  </div>
-                  <div className="text-xs text-slate-600 border-t border-surface-border pt-2 italic">
-                    {season.inSeason
-                      ? 'No sample on file right now — rainfall signals below serve as the bacteria proxy'
-                      : 'Until then, rainfall signals below serve as the bacteria proxy'}
-                  </div>
-                </div>
-              ) : (
-                <SignalCard
-                  title={bacteriaTitle(data.swimguide.source)}
-                  icon="🦠"
-                  status={swimguideStatus(data.swimguide.status)}
-                  primary={
-                    data.swimguide.latest_mpn != null
-                      ? `${data.swimguide.latest_mpn} MPN/100mL`
-                      : swimguideLabel(data.swimguide.status)
-                  }
-                  secondary={
-                    data.swimguide.latest_date != null
-                      ? `Sampled ${data.swimguide.latest_date}${data.swimguide.age_days != null ? ` · ${data.swimguide.age_days}d ago` : ''}`
-                      : data.swimguide.beaches.length > 1
-                      ? `${data.swimguide.beaches.length} sites — worst shown`
-                      : undefined
-                  }
-                  detail={bacteriaDetail(data.swimguide)}
-                  note={bacteriaNote(data.swimguide, season.inSeason)}
-                />
-              )}
+              <BacteriaCard primary={data.bacteria.primary} />
 
               {/* Rainfall 24h */}
               <SignalCard
@@ -299,7 +338,7 @@ export default function App() {
               <SignalCard
                 title="Rainfall — Last 72h"
                 icon="⛈️"
-                status={rainStatus(data.weather.rain_72h_in)}
+                status={rain72Status(data.weather.rain_72h_in)}
                 primary={
                   data.weather.rain_72h_in != null
                     ? `${data.weather.rain_72h_in.toFixed(2)}"`
@@ -315,33 +354,38 @@ export default function App() {
                 note="48–72h post-rain = peak risk in eastern NC"
               />
 
-              {/* Rain forecast */}
+              {/* Rain forecast — expected amount, not just chance */}
               <SignalCard
                 title="Rain Forecast (72h)"
                 icon="📅"
-                status={
-                  data.weather.rain_forecast_pct == null
-                    ? 'unknown'
-                    : data.weather.rain_forecast_pct >= 60
-                    ? 'warn'
-                    : data.weather.rain_forecast_pct >= 30
-                    ? 'warn'
-                    : 'ok'
-                }
+                status={forecastStatus(data.weather)}
                 primary={
-                  data.weather.rain_forecast_pct != null
+                  data.weather.qpf_72h_in != null
+                    ? `${data.weather.qpf_72h_in.toFixed(2)}" expected`
+                    : data.weather.rain_forecast_pct != null
                     ? `${data.weather.rain_forecast_pct}% chance`
                     : 'No forecast'
                 }
                 secondary={
-                  data.weather.rain_forecast_pct != null && data.weather.rain_forecast_pct >= 30
-                    ? `${data.weather.rain_forecast_period} — bacteria risk elevated 48–72h after`
+                  data.weather.qpf_72h_in != null && data.weather.qpf_72h_in >= 0.25
+                    ? 'Bacteria risk rises 48–72h after'
                     : data.weather.rain_forecast_pct != null
-                    ? data.weather.rain_forecast_period ?? 'Low rain risk ahead'
-                    : undefined
+                    ? `Peak chance ${data.weather.rain_forecast_pct}% · ${data.weather.rain_forecast_period}`
+                    : 'No rain in the forecast'
                 }
-                detail="NWS MHX · next 72h"
+                detail="NWS · River Bend grid cell"
                 note="Plan swims before rain or 3+ days after"
+              />
+
+              {/* Lightning */}
+              <SignalCard
+                title="Lightning Risk"
+                icon="⚡"
+                status={thunderStatus(data.weather.thunder_pct_6h)}
+                primary={data.weather.thunder_pct_6h != null ? `${data.weather.thunder_pct_6h}%` : 'No data'}
+                secondary="Chance of thunder, next 6h"
+                detail={data.weather.thunder_pct_24h != null ? `Next 24h: ${data.weather.thunder_pct_24h}%` : undefined}
+                note="Hear thunder? Get out of the water"
               />
 
               {/* Water temp */}
@@ -349,27 +393,51 @@ export default function App() {
                 title="Water Temperature"
                 icon="🌡️"
                 status={
-                  data.water_temp_f == null
+                  data.water.temp_f == null
                     ? 'unknown'
-                    : data.water_temp_f < 60
+                    : data.water.temp_f < 60
                     ? 'warn'
                     : 'ok'
                 }
-                primary={
-                  data.water_temp_f != null ? `${data.water_temp_f}°F` : 'No data'
-                }
+                primary={data.water.temp_f != null ? `${data.water.temp_f}°F` : 'No data'}
                 secondary={
-                  data.water_temp_f != null
-                    ? data.water_temp_f >= 75
+                  data.water.temp_f != null
+                    ? data.water.temp_f >= 75
                       ? 'Warm — comfortable'
-                      : data.water_temp_f >= 65
+                      : data.water.temp_f >= 65
                       ? 'Moderate'
                       : 'Cool'
-                    : 'No USGS sensor on Trent River'
+                    : 'No sensor reachable'
                 }
-                detail={data.water_temp_source ?? 'NOAA CO-OPS coastal proxy'}
-                note="No water temp sensor on any Trent River USGS gauge"
+                detail={
+                  data.water.temp_source
+                    ? `${data.water.temp_source}${data.water.temp_date ? ` · ${shortDate(data.water.temp_date)}` : ''}`
+                    : undefined
+                }
+                note={
+                  data.water.temp_date
+                    ? 'Measured on site when DEQ sampled'
+                    : 'Ocean-inlet proxy ~40 mi SE — the shallow Trent runs warmer in summer, cooler in winter'
+                }
               />
+
+              {/* Vibrio */}
+              <SignalCard
+                title="Vibrio Risk"
+                icon="🧫"
+                status={vibrioStatus(data.vibrio.level)}
+                primary={data.vibrio.level.charAt(0).toUpperCase() + data.vibrio.level.slice(1)}
+                secondary={data.vibrio.reason}
+                detail={
+                  data.water.salinity_ppt != null && data.water.salinity_site && data.water.salinity_date
+                    ? `Salinity at ${data.water.salinity_site.split(',')[0]} · ${shortDate(data.water.salinity_date)}`
+                    : undefined
+                }
+                note="For open wounds, liver disease or weak immunity — not in score"
+              />
+
+              <IncidentsCard reports={data.reports} />
+              <SpillsCard reports={data.reports} />
 
               {/* Wind */}
               <SignalCard
@@ -410,54 +478,26 @@ export default function App() {
                 }
                 secondary={
                   data.gauges.upstream.discharge_p80 != null
-                    ? `80th pct: ${data.gauges.upstream.discharge_p80.toFixed(0)} ft³/s`
+                    ? `80th pct for today: ${data.gauges.upstream.discharge_p80.toFixed(0)} ft³/s`
                     : undefined
                 }
                 detail="Trent near Trenton — runoff indicator"
               />
             </div>
 
+            <BacteriaSites
+              readings={data.bacteria.readings}
+              primary={data.bacteria.primary}
+              seasonLabel={season.label}
+            />
+
+            <ReportsSection reports={data.reports} />
+
             {/* USGS Gauge Detail Table */}
             <GaugeSection
               upstream={data.gauges.upstream}
               local={data.gauges.local}
             />
-
-            {/* Swim Guide beaches */}
-            {data.swimguide.beaches.length > 0 && (
-              <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-lg">📍</span>
-                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                    Monitored Swim Sites
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {data.swimguide.beaches.map((beach) => (
-                    <div
-                      key={beach.id}
-                      className="flex items-center justify-between py-2 border-b border-surface-border last:border-0"
-                    >
-                      <span className="text-sm text-slate-300">{beach.name}</span>
-                      <span
-                        className={clsx(
-                          'text-xs px-2 py-0.5 rounded-full font-medium border',
-                          beach.status === 'safe'
-                            ? 'bg-green-500/20 text-green-300 border-green-500/30'
-                            : beach.status === 'unsafe'
-                            ? 'bg-red-500/20 text-red-300 border-red-500/30'
-                            : beach.status === 'caution'
-                            ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
-                            : 'bg-slate-700 text-slate-400 border-slate-600'
-                        )}
-                      >
-                        {beach.status.charAt(0).toUpperCase() + beach.status.slice(1)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         )}
       </main>
@@ -467,21 +507,30 @@ export default function App() {
         <p className="text-xs text-slate-600 text-center">
           Data from{' '}
           <a
-            href="https://waterservices.usgs.gov/"
+            href="https://waterdata.usgs.gov/"
             className="text-slate-500 hover:text-slate-300 underline"
             target="_blank"
             rel="noreferrer"
           >
-            USGS NWIS
+            USGS
           </a>
           {' · '}
           <a
-            href="https://www.theswimguide.org/"
+            href="https://soundrivers.org/swim-guide/"
             className="text-slate-500 hover:text-slate-300 underline"
             target="_blank"
             rel="noreferrer"
           >
-            Swim Guide / Sound Rivers
+            Sound Rivers
+          </a>
+          {' · '}
+          <a
+            href="https://ncdenr.maps.arcgis.com/apps/dashboards/99430d6fd1824b78ae328c6a5538852f"
+            className="text-slate-500 hover:text-slate-300 underline"
+            target="_blank"
+            rel="noreferrer"
+          >
+            NC DEQ
           </a>
           {' · '}
           <a

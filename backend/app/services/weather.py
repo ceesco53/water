@@ -2,13 +2,18 @@ import asyncio
 import httpx
 import math
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
+
+from ..geo import RIVER_BEND_LAT, RIVER_BEND_LON
 
 logger = logging.getLogger(__name__)
 
 NOAA_BASE = "https://api.weather.gov"
 # Craven County Regional Airport (KEWN) — closest ASOS station to New Bern
 NOAA_STATION = "KEWN"
+# River Bend's own 2.5km NWS grid cell — see _fetch_rain_forecast for why
+NWS_GRID = "MHX/41,72"
 NOAA_HEADERS = {
     "User-Agent": "(water-monitor/1.0, ceesco53@gmail.com)",
     "Accept": "application/geo+json",
@@ -17,6 +22,8 @@ NOAA_HEADERS = {
 # NOAA CO-OPS: Beaufort Duke Marine Lab (~40mi SE of New Bern)
 # Closest station with real-time water temperature on the inner coast.
 # No USGS sensor exists on any Trent River gauge (00010 unavailable at all 3 sites).
+# Fallback only: main.py prefers the temperature NC DEQ measures on site when
+# it samples Union Point, whenever that sample is under a week old.
 COOPS_BASE = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 COOPS_WATER_TEMP_STATION = "8656483"
 COOPS_WATER_TEMP_NAME = "Beaufort, NC (coastal proxy)"
@@ -77,12 +84,120 @@ async def fetch_water_temp_f() -> dict:
 
 
 async def fetch_weather_data() -> dict:
-    rain_wind, water_temp, forecast = await asyncio.gather(
+    rain_wind, water_temp, forecast, grid, alerts = await asyncio.gather(
         _fetch_rain_and_wind(),
         fetch_water_temp_f(),
         _fetch_rain_forecast(),
+        _fetch_gridpoint_data(),
+        fetch_nws_alerts(),
     )
-    return {**rain_wind, **water_temp, **forecast}
+    return {**rain_wind, **water_temp, **forecast, **grid, "alerts": alerts}
+
+
+_SEVERITY_RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1}
+
+
+async def fetch_nws_alerts() -> list[dict] | None:
+    """
+    Active NWS alerts (warnings, watches, advisories) covering River Bend,
+    most severe first. None if the API is unreachable, [] if all clear.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{NOAA_BASE}/alerts/active",
+                params={"point": f"{RIVER_BEND_LAT},{RIVER_BEND_LON}"},
+                headers=NOAA_HEADERS,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning("NWS alerts fetch failed: %s", e)
+        return None
+
+    alerts = []
+    for feature in data.get("features", []):
+        props = feature.get("properties", {})
+        if not props.get("event"):
+            continue
+        alerts.append({
+            "event": props["event"],
+            "severity": props.get("severity"),
+            "headline": props.get("headline"),
+            "ends": props.get("ends") or props.get("expires"),
+        })
+    alerts.sort(key=lambda a: _SEVERITY_RANK.get(a["severity"], 0), reverse=True)
+    return alerts
+
+
+_ISO_DURATION = re.compile(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?")
+
+
+def _parse_valid_time(valid_time: str) -> tuple[datetime, datetime] | None:
+    """NWS grid validTime is '<ISO start>/<ISO 8601 duration>', e.g. '2026-10-06T12:00:00+00:00/PT6H'."""
+    try:
+        start_str, duration = valid_time.split("/")
+        start = datetime.fromisoformat(start_str)
+    except ValueError:
+        return None
+    m = _ISO_DURATION.fullmatch(duration)
+    if not m:
+        return None
+    days, hours, minutes = (int(g or 0) for g in m.groups())
+    end = start + timedelta(days=days, hours=hours, minutes=minutes)
+    return (start, end) if end > start else None
+
+
+def _grid_values(props: dict, field: str):
+    """Yield (start, end, value) for each valid interval of a raw grid field."""
+    for v in (props.get(field) or {}).get("values", []):
+        span = _parse_valid_time(v.get("validTime", ""))
+        if span is not None and v.get("value") is not None:
+            yield span[0], span[1], v["value"]
+
+
+def _max_pct_within(props: dict, field: str, now: datetime, hours: int) -> int | None:
+    horizon = now + timedelta(hours=hours)
+    values = [
+        value for start, end, value in _grid_values(props, field)
+        if end > now and start < horizon
+    ]
+    return int(max(values)) if values else None
+
+
+async def _fetch_gridpoint_data() -> dict:
+    """
+    Raw NWS grid data for River Bend's cell — the numbers behind the text
+    forecast. Two things the text forecast can't give: how much rain is
+    expected (a 60% chance of 0.05" is no runoff risk; 40% of 1.5" is), and
+    the thunder probability over the next few hours — lightning being the
+    most immediate swim hazard there is.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{NOAA_BASE}/gridpoints/{NWS_GRID}", headers=NOAA_HEADERS)
+            resp.raise_for_status()
+            props = resp.json().get("properties", {})
+    except Exception as e:
+        logger.warning("NWS gridpoint fetch failed: %s", e)
+        return {"qpf_72h_in": None, "thunder_pct_6h": None, "thunder_pct_24h": None}
+
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(hours=72)
+
+    # QPF comes in 1–6h blocks; prorate the blocks that straddle now or the
+    # 72h horizon by how much of each falls inside the window.
+    qpf_mm = None
+    for start, end, value in _grid_values(props, "quantitativePrecipitation"):
+        overlap = (min(end, horizon) - max(start, now)).total_seconds()
+        if overlap > 0:
+            qpf_mm = (qpf_mm or 0.0) + value * overlap / (end - start).total_seconds()
+
+    return {
+        "qpf_72h_in": round(_mm_to_in(qpf_mm), 2) if qpf_mm is not None else None,
+        "thunder_pct_6h": _max_pct_within(props, "probabilityOfThunder", now, 6),
+        "thunder_pct_24h": _max_pct_within(props, "probabilityOfThunder", now, 24),
+    }
 
 
 async def _fetch_rain_forecast() -> dict:
@@ -101,7 +216,7 @@ async def _fetch_rain_forecast() -> dict:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{NOAA_BASE}/gridpoints/MHX/41,72/forecast",
+                f"{NOAA_BASE}/gridpoints/{NWS_GRID}/forecast",
                 headers=NOAA_HEADERS,
             )
             resp.raise_for_status()
