@@ -56,7 +56,7 @@ export function GaugeSection({ upstream, local }: Props) {
         <GaugeRow gauge={local} />
       </div>
       <div className="mt-3 text-xs text-slate-600">
-        Yellow discharge = above 7-day 80th percentile (elevated runoff)
+        Yellow discharge = above the historical 80th percentile for today's date (elevated runoff)
       </div>
     </div>
   )
