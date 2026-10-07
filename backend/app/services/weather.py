@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 NOAA_BASE = "https://api.weather.gov"
 # Craven County Regional Airport (KEWN) — closest ASOS station to New Bern
 NOAA_STATION = "KEWN"
+# Minute past the hour KEWN sends its routine METAR; hourly precipitation
+# resets right after it (see _fetch_rain_and_wind)
+_ROUTINE_REPORT_MINUTE = 54
 # River Bend's own 2.5km NWS grid cell — see _fetch_rain_forecast for why
 NWS_GRID = "MHX/41,72"
 NOAA_HEADERS = {
@@ -301,13 +304,15 @@ async def _fetch_rain_and_wind() -> dict:
 
     now = datetime.now(timezone.utc)
 
-    # precipitationLastHour is a rolling 60-minute accumulator, refreshed on
-    # roughly every 5-minute observation during active rain — summing every
-    # reading directly counts the same rain many times over, since readings
-    # 5 minutes apart share ~55 minutes of overlap. Instead, chain together
-    # readings less than 60 minutes apart (the only way their windows can
-    # overlap) into one burst and take that burst's peak reading, which is
-    # its best available total.
+    # precipitationLastHour is the METAR "P" group: rain since the last
+    # routine hourly report (KEWN's go out at :54), reset right after it. The
+    # 5-minute and special observations in between carry the running total,
+    # so within one routine-to-routine period the readings only climb and the
+    # period's total is its largest reading. Summing every reading counts the
+    # same rain many times over; chaining back-to-back periods into a single
+    # "burst" keeps just one hour of a multi-hour storm. Summing per-period
+    # maxima matched KEWN's own 24h total group exactly (70132 = 1.32" for
+    # 12Z Oct 3–4, 2026), where the burst method gave about a third of it.
     readings: list[tuple[datetime, float]] = []
     wind_speed_mph = None
     wind_direction = None
@@ -355,19 +360,19 @@ async def _fetch_rain_and_wind() -> dict:
             if wind_speed_mph is not None:
                 latest_set = True
 
-    readings.sort(key=lambda r: r[0])
-    bursts: list[list[tuple[datetime, float]]] = []
+    # Shift timestamps so a routine report lands in the same clock hour as the
+    # readings leading up to it, and anything after it in the next hour.
+    shift = timedelta(minutes=59 - _ROUTINE_REPORT_MINUTE)
+    periods: dict[datetime, tuple[datetime, float]] = {}
     for ts, v in readings:
-        if bursts and (ts - bursts[-1][-1][0]).total_seconds() <= 3600:
-            bursts[-1].append((ts, v))
-        else:
-            bursts.append([(ts, v)])
+        key = (ts + shift).replace(minute=0, second=0, microsecond=0)
+        last_ts, peak = periods.get(key, (ts, v))
+        periods[key] = (max(last_ts, ts), max(peak, v))
 
     rain_24h_mm = 0.0
     rain_72h_mm = 0.0
-    for burst in bursts:
-        peak_ts, peak_val = max(burst, key=lambda r: r[1])
-        age_hours = (now - peak_ts).total_seconds() / 3600
+    for last_ts, peak_val in periods.values():
+        age_hours = (now - last_ts).total_seconds() / 3600
         if age_hours <= 24:
             rain_24h_mm += peak_val
         if age_hours <= 72:
