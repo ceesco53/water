@@ -8,8 +8,8 @@ NAMESPACE="water"
 
 # ── GitHub PAT with write:packages scope (env → sibling .env files → fail) ───
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  # Try the market-sentiment-tracker .env which holds the packages-scoped PAT
-  GITHUB_TOKEN="$(grep '^GITHUB_TOKEN=' "$(dirname "$0")/../market-sentiment-tracker/.env" 2>/dev/null | cut -d= -f2)" || true
+  # Try the sentiment repo's .env, which holds the packages-scoped PAT
+  GITHUB_TOKEN="$(grep '^GITHUB_TOKEN=' "$(dirname "$0")/../sentiment/.env" 2>/dev/null | cut -d= -f2)" || true
 fi
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "ERROR: GITHUB_TOKEN not set. Export a PAT with write:packages scope."
