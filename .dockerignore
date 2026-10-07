@@ -8,3 +8,4 @@ backend/.venv
 .github
 k8s
 *.md
+backend/calibration/.cache
