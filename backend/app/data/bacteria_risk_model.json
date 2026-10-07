@@ -1,0 +1,91 @@
+{
+  "model": "logistic",
+  "label": "Logistic: rain + flow + season + site",
+  "target": "P(enterococcus >= 104 MPN/100mL), predicted as site C100A",
+  "features": [
+    {
+      "name": "rain_0_3d",
+      "transform": "log(1 + rain in the 72h before, in)"
+    },
+    {
+      "name": "rain_3_7d",
+      "transform": "log(1 + rain 3\u20137 days before, in)"
+    },
+    {
+      "name": "flow",
+      "transform": "log(Trenton flow \u00f7 day-of-year p80)"
+    },
+    {
+      "name": "season_sin",
+      "transform": "sin(2\u03c0 \u00b7 day of year / 365.25)"
+    },
+    {
+      "name": "season_cos",
+      "transform": "cos(2\u03c0 \u00b7 day of year / 365.25)"
+    },
+    {
+      "name": "union_point",
+      "transform": "1 at Union Point (C100A), 0 at NW Creek (C99)"
+    }
+  ],
+  "scaler_mean": [
+    0.22792655520177302,
+    0.3667282753918224,
+    -1.206693124133486,
+    -0.05228880459639756,
+    -0.18855603448076308,
+    0.4897959183673469
+  ],
+  "scaler_scale": [
+    0.3150548534738432,
+    0.4066788220651258,
+    1.4990197903312226,
+    0.7207691595086866,
+    0.6649844520557674,
+    0.49989586587412227
+  ],
+  "intercept": -4.000933510587703,
+  "coef": [
+    0.7681925533954038,
+    0.3936562712768786,
+    0.2907472096034295,
+    0.021718544732426744,
+    0.8468840417690727,
+    0.5978295668992292
+  ],
+  "exceedance_mpn": 104,
+  "policy": {
+    "caution_probability": 0.155,
+    "summer_floor": {
+      "months": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "rain_72h_in": 2.0
+    },
+    "target_clean_flag_rate": 0.05,
+    "backtest": {
+      "clean_flag_rate": 0.0472,
+      "exceedances_caught": 13,
+      "exceedances": 35
+    }
+  },
+  "trained": {
+    "date": "2026-10-07",
+    "samples": 882,
+    "exceedances": 35,
+    "years": [
+      1998,
+      2026
+    ]
+  },
+  "validation": {
+    "loyo_auc": 0.78,
+    "loyo_brier": 0.03303,
+    "base_rate_brier": 0.03819,
+    "formula_auc": 0.742
+  }
+}

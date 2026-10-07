@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import risk_model
 from .scoring import (
     BACTERIA_FULL_WEIGHT_DAYS,
     compute_score,
@@ -93,14 +94,29 @@ async def _build_conditions() -> dict:
 
     rain_24h = weather_res.get("rain_24h_in")
     rain_72h = weather_res.get("rain_72h_in")
+    rain_7d = weather_res.get("rain_7d_in")
+    rain_gauge_issue = weather_res.get("rain_gauge_issue")
     alerts = weather_res.get("alerts")
+
+    # Chance a sample today would exceed the swim standard. When KEWN's gauge
+    # is out or missing reports, its rain is treated as unknown rather than
+    # as the zeros it reports.
+    flow_cfs, flow_p80 = upstream.get("discharge_cfs"), upstream.get("discharge_cfs_p80")
+    trusted_rain = rain_gauge_issue is None
+    try:
+        bacteria_risk = risk_model.predict(
+            rain_72h_in=rain_72h if trusted_rain else None,
+            rain_7d_in=rain_7d if trusted_rain else None,
+            flow_ratio=flow_cfs / flow_p80 if flow_cfs is not None and flow_p80 else None,
+            day=datetime.now(timezone.utc).date(),
+        )
+    except Exception as e:
+        logger.error("Bacteria risk model failed: %s", e)
+        bacteria_risk = None
 
     score, rating, color, factors = compute_score(
         bacteria=primary,
-        rain_24h_in=rain_24h,
-        rain_72h_in=rain_72h,
-        upstream_discharge_cfs=upstream.get("discharge_cfs"),
-        upstream_discharge_p80=upstream.get("discharge_cfs_p80"),
+        bacteria_risk=bacteria_risk,
         nws_alerts=alerts,
         thunder_pct_6h=weather_res.get("thunder_pct_6h"),
         incidents=incidents,
@@ -116,9 +132,12 @@ async def _build_conditions() -> dict:
             "primary": primary,
             "readings": readings,
         },
+        "bacteria_risk": bacteria_risk,
         "weather": {
             "rain_24h_in": rain_24h,
             "rain_72h_in": rain_72h,
+            "rain_7d_in": rain_7d,
+            "rain_gauge_issue": rain_gauge_issue,
             "wind_speed_mph": weather_res.get("wind_speed_mph"),
             "wind_direction": weather_res.get("wind_direction"),
             "rain_forecast_pct": weather_res.get("rain_forecast_pct"),

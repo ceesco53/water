@@ -60,6 +60,17 @@ export interface SewerSpill {
   distance_mi: number | null
 }
 
+export interface BacteriaRisk {
+  probability: number
+  caution_probability: number
+  summer_storm: boolean
+  summer_floor_rain_in: number
+  rain_72h_in: number | null
+  missing_inputs: string[]
+  trained: { date: string; samples: number; exceedances: number; years: [number, number] }
+  validation: { loyo_auc: number; loyo_brier: number; base_rate_brier: number; formula_auc: number }
+}
+
 export interface Gauge {
   site_code: string
   site_name: string
@@ -78,9 +89,13 @@ export interface Conditions {
     primary: BacteriaReading | null
     readings: BacteriaReading[]
   }
+  bacteria_risk: BacteriaRisk | null
   weather: {
     rain_24h_in: number | null
     rain_72h_in: number | null
+    rain_7d_in: number | null
+    // Set when KEWN's gauge is out (PNO) or missing reports; rain may be undercounted
+    rain_gauge_issue: string | null
     wind_speed_mph: number | null
     wind_direction: string | null
     rain_forecast_pct: number | null

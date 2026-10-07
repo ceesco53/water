@@ -252,7 +252,19 @@ async def _fetch_rain_forecast() -> dict:
     }
 
 
-async def _fetch_observations(client: httpx.AsyncClient, max_pages: int = 3) -> list[dict]:
+# Rain windows reported; the 7-day total feeds the bacteria-risk model.
+_RAIN_WINDOWS_H = {"rain_24h_in": 24, "rain_72h_in": 72, "rain_7d_in": 168}
+
+# Below this share of hours with any report in the last 7 days, rain totals
+# can't be trusted: KEWN dropped ~40% of its reports for weeks in Aug 2026.
+_MIN_HOUR_COVERAGE = 0.9
+
+# ASOS appends PNO to its remarks when the rain gauge is out of service —
+# and keeps reporting 0.00" of rain. It did so through Aug–Sep 2025.
+_GAUGE_OFFLINE = re.compile(r"\bPNO\b")
+
+
+async def _fetch_observations(client: httpx.AsyncClient, hours: int = 169, max_pages: int = 6) -> list[dict]:
     """
     KEWN (an augmented ASOS) reports roughly every 5 minutes, not hourly, and
     this endpoint caps at 500 observations per page — one page only reaches
@@ -260,16 +272,24 @@ async def _fetch_observations(client: httpx.AsyncClient, max_pages: int = 3) -> 
     back barely 6-8 hours) silently truncated the "72h" rainfall window to
     whatever the last few hours happened to be, which is how confirmed
     same-day rain could still show 0.00in. Page through pagination.next until
-    72h of coverage is reached (typically 2 pages).
+    `hours` of coverage is reached (7 days ≈ 5 pages). If a later page fails,
+    keep what's in hand: windows reaching past it come back unknown, not short.
     """
     all_features: list[dict] = []
     url = f"{NOAA_BASE}/stations/{NOAA_STATION}/observations"
     params: dict | None = {"limit": 500}
     now = datetime.now(timezone.utc)
 
-    for _ in range(max_pages):
-        resp = await client.get(url, params=params, headers=NOAA_HEADERS)
-        resp.raise_for_status()
+    for page in range(max_pages):
+        try:
+            resp = await client.get(url, params=params, headers=NOAA_HEADERS)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            if not all_features:
+                raise
+            logger.warning("NOAA observations page %d failed (%s); using the %d observations in hand",
+                           page + 1, e, len(all_features))
+            break
         data = resp.json()
         features = data.get("features", [])
         all_features.extend(features)
@@ -282,7 +302,7 @@ async def _fetch_observations(client: httpx.AsyncClient, max_pages: int = 3) -> 
         if not timestamps:
             break
         oldest = min(datetime.fromisoformat(t.replace("Z", "+00:00")) for t in timestamps)
-        if (now - oldest).total_seconds() / 3600 >= 73:
+        if (now - oldest).total_seconds() / 3600 >= hours:
             break
 
         next_url = data.get("pagination", {}).get("next")
@@ -295,15 +315,17 @@ async def _fetch_observations(client: httpx.AsyncClient, max_pages: int = 3) -> 
 
 async def _fetch_rain_and_wind() -> dict:
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             features = await _fetch_observations(client)
     except Exception as e:
         logger.warning("NOAA weather API failed: %s", e)
-        return {"error": str(e), "rain_24h_in": None, "rain_72h_in": None,
-                "wind_speed_mph": None, "wind_direction": None}
+        return {"error": str(e), **{k: None for k in _RAIN_WINDOWS_H},
+                "rain_gauge_issue": None, "wind_speed_mph": None, "wind_direction": None}
+    return _summarize_observations(features, datetime.now(timezone.utc))
 
-    now = datetime.now(timezone.utc)
 
+def _summarize_observations(features: list[dict], now: datetime) -> dict:
+    """Rain totals, rain-gauge health, and the latest wind from KEWN observations."""
     # precipitationLastHour is the METAR "P" group: rain since the last
     # routine hourly report (KEWN's go out at :54), reset right after it. The
     # 5-minute and special observations in between carry the running total,
@@ -314,9 +336,13 @@ async def _fetch_rain_and_wind() -> dict:
     # maxima matched KEWN's own 24h total group exactly (70132 = 1.32" for
     # 12Z Oct 3–4, 2026), where the burst method gave about a third of it.
     readings: list[tuple[datetime, float]] = []
+    hours_reported: set[datetime] = set()
+    oldest: datetime | None = None
+    gauge_offline = False
     wind_speed_mph = None
     wind_direction = None
     latest_set = False
+    week_ago = now - timedelta(hours=_RAIN_WINDOWS_H["rain_7d_in"])
 
     for feature in features:
         props = feature.get("properties", {})
@@ -328,6 +354,12 @@ async def _fetch_rain_and_wind() -> dict:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
         except Exception:
             continue
+
+        oldest = ts if oldest is None else min(oldest, ts)
+        if ts > week_ago:
+            hours_reported.add(ts.replace(minute=0, second=0, microsecond=0))
+            if _GAUGE_OFFLINE.search(props.get("rawMessage") or ""):
+                gauge_offline = True
 
         precip = props.get("precipitationLastHour", {})
         precip_val = precip.get("value") if isinstance(precip, dict) else None
@@ -369,18 +401,29 @@ async def _fetch_rain_and_wind() -> dict:
         last_ts, peak = periods.get(key, (ts, v))
         periods[key] = (max(last_ts, ts), max(peak, v))
 
-    rain_24h_mm = 0.0
-    rain_72h_mm = 0.0
-    for last_ts, peak_val in periods.values():
-        age_hours = (now - last_ts).total_seconds() / 3600
-        if age_hours <= 24:
-            rain_24h_mm += peak_val
-        if age_hours <= 72:
-            rain_72h_mm += peak_val
+    # A window the observations don't reach back across is unknown, not dry.
+    reached_h = (now - oldest).total_seconds() / 3600 if oldest else 0
+    totals: dict[str, float | None] = {}
+    for name, hours in _RAIN_WINDOWS_H.items():
+        if reached_h < hours - 1:
+            totals[name] = None
+            continue
+        mm = sum(peak for last_ts, peak in periods.values()
+                 if (now - last_ts).total_seconds() / 3600 <= hours)
+        totals[name] = round(_mm_to_in(mm), 2)
+
+    span_h = min(reached_h, _RAIN_WINDOWS_H["rain_7d_in"])
+    coverage = len(hours_reported) / span_h if span_h >= 1 else 0.0
+    if gauge_offline:
+        gauge_issue = "KEWN's rain gauge reported out of service (PNO) in the last 7 days"
+    elif span_h >= 1 and coverage < _MIN_HOUR_COVERAGE:
+        gauge_issue = f"KEWN missed reports for {1 - coverage:.0%} of the last {span_h:.0f} hours"
+    else:
+        gauge_issue = None
 
     return {
-        "rain_24h_in": round(_mm_to_in(rain_24h_mm), 2),
-        "rain_72h_in": round(_mm_to_in(rain_72h_mm), 2),
+        **totals,
+        "rain_gauge_issue": gauge_issue,
         "wind_speed_mph": round(wind_speed_mph, 1) if wind_speed_mph is not None else None,
         "wind_direction": wind_direction,
     }

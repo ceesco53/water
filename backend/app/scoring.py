@@ -46,7 +46,7 @@ def select_bacteria_reading(readings: list[dict]) -> Optional[dict]:
 def _bacteria_factor(reading: Optional[dict]) -> dict:
     if reading is None:
         return {"label": "Bacteria", "impact": -5,
-                "reason": "No sampling data available — rain and flow stand in"}
+                "reason": "No sampling data available — the risk model stands in"}
 
     label = f"Bacteria ({reading['source']})"
     status = reading["status"]
@@ -58,7 +58,7 @@ def _bacteria_factor(reading: Optional[dict]) -> dict:
     if age is not None and age > BACTERIA_HALF_WEIGHT_DAYS:
         return {"label": label, "impact": -5,
                 "reason": (f"Newest sample is {age}d old ({site}: {desc}) — "
-                           "too old to count; rain and flow stand in")}
+                           "too old to count; the risk model stands in")}
     if age is not None and age <= BACTERIA_FULL_WEIGHT_DAYS:
         suffix = " — do not swim" if status == "unsafe" else ""
         return {"label": label, "impact": base,
@@ -122,12 +122,36 @@ def _spill_factor(spills: list[dict]) -> dict:
             "reason": f"{amount} reached {where} ({when}{dist})"}
 
 
+# Bacteria-risk warning policy (set in calibration/fit_model.py, stored with
+# the model): at or above the model's Caution probability -- or after a big
+# summer storm, whatever the model says -- this factor alone drops the score
+# into Caution. Below that line the penalty scales with the probability,
+# reaching -25 (Good) just under it. The model replaced separate 24h-rain,
+# 72h-rain and upstream-flow rules, which backtested worse on 1998-2026 DEQ
+# samples (see calibration/reports/).
+_CAUTION_IMPACT = -31  # 100 - 31 = 69, the top of the Caution band
+_BELOW_CAUTION_MAX_IMPACT = -25
+
+
+def _risk_factor(risk: dict) -> dict:
+    p, line = risk["probability"], risk["caution_probability"]
+    chance = f"{p:.0%}" if p >= 0.01 else "<1%"
+    unknown = f" ({', '.join(risk['missing_inputs'])} unavailable)" if risk["missing_inputs"] else ""
+    if p >= line:
+        return {"label": "Bacteria Risk", "impact": _CAUTION_IMPACT,
+                "reason": f"{chance} chance of exceeding the swim standard — over the "
+                          f"{line:.1%} warning line{unknown}"}
+    if risk["summer_storm"]:
+        return {"label": "Bacteria Risk", "impact": _CAUTION_IMPACT,
+                "reason": f"{risk['rain_72h_in']:.1f}\" of rain in 72h — big summer storms always "
+                          f"rate Caution ({chance} modeled){unknown}"}
+    return {"label": "Bacteria Risk", "impact": round(_BELOW_CAUTION_MAX_IMPACT * p / line),
+            "reason": f"{chance} chance of exceeding the swim standard{unknown}"}
+
+
 def compute_score(
     bacteria: Optional[dict],
-    rain_24h_in: Optional[float],
-    rain_72h_in: Optional[float],
-    upstream_discharge_cfs: Optional[float],
-    upstream_discharge_p80: Optional[float],
+    bacteria_risk: Optional[dict],
     nws_alerts: Optional[list[dict]] = None,
     thunder_pct_6h: Optional[int] = None,
     incidents: Optional[list[dict]] = None,
@@ -144,39 +168,9 @@ def compute_score(
     # Bacteria — highest weight, primary safety signal
     add(_bacteria_factor(bacteria))
 
-    # Rainfall 24h — runoff contamination risk
-    if rain_24h_in is not None:
-        if rain_24h_in > 1.0:
-            add({"label": "Rainfall (24h)", "impact": -20,
-                 "reason": f"{rain_24h_in:.2f}\" — heavy runoff risk"})
-        elif rain_24h_in > 0.5:
-            add({"label": "Rainfall (24h)", "impact": -10,
-                 "reason": f"{rain_24h_in:.2f}\" — moderate runoff risk"})
-        else:
-            add({"label": "Rainfall (24h)", "impact": 0,
-                 "reason": f"{rain_24h_in:.2f}\" — minimal rainfall"})
-
-    # Rainfall 72h — contamination window (48–72h is peak risk in eastern NC)
-    if rain_72h_in is not None:
-        if rain_72h_in > 2.0:
-            add({"label": "Rainfall (72h)", "impact": -15,
-                 "reason": f"{rain_72h_in:.2f}\" — within peak contamination window"})
-        elif rain_72h_in > 1.0:
-            add({"label": "Rainfall (72h)", "impact": -8,
-                 "reason": f"{rain_72h_in:.2f}\" — elevated 72h accumulation"})
-        else:
-            add({"label": "Rainfall (72h)", "impact": 0,
-                 "reason": f"{rain_72h_in:.2f}\" — dry period, low risk"})
-
-    # Upstream discharge — flushing / runoff indicator
-    if upstream_discharge_cfs is not None and upstream_discharge_p80 is not None:
-        if upstream_discharge_cfs > upstream_discharge_p80:
-            add({"label": "Upstream Flow", "impact": -10,
-                 "reason": (f"{upstream_discharge_cfs:.0f} ft³/s — above the historical "
-                            f"80th pct for today ({upstream_discharge_p80:.0f}), elevated runoff")})
-        else:
-            add({"label": "Upstream Flow", "impact": 0,
-                 "reason": f"{upstream_discharge_cfs:.0f} ft³/s — normal range"})
+    # Predicted bacteria risk from rain, river flow and season
+    if bacteria_risk is not None:
+        add(_risk_factor(bacteria_risk))
 
     # Sewage reaching the water — direct bacteria source
     if sewer_spills is not None:
@@ -209,17 +203,18 @@ def compute_score(
                  "reason": f"{thunder_pct_6h}% — low lightning risk"})
 
     score = max(0, min(100, score))
-
-    if score >= 85:
-        rating, color = "Excellent", "green"
-    elif score >= 70:
-        rating, color = "Good", "blue"
-    elif score >= 50:
-        rating, color = "Caution", "yellow"
-    else:
-        rating, color = "Avoid Swimming", "red"
-
+    rating, color = rating_for(score)
     return score, rating, color, factors
+
+
+def rating_for(score: int) -> tuple[str, str]:
+    if score >= 85:
+        return "Excellent", "green"
+    if score >= 70:
+        return "Good", "blue"
+    if score >= 50:
+        return "Caution", "yellow"
+    return "Avoid Swimming", "red"
 
 
 # Vibrio vulnificus multiplies in warm, brackish water: growth is suppressed

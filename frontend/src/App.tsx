@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { formatDistanceToNow } from 'date-fns'
 import { fetchConditions, forceRefresh } from './api'
-import type { BacteriaReading, Conditions, SewerSpill } from './types'
+import type { BacteriaReading, BacteriaRisk, Conditions, SewerSpill } from './types'
 import { ago, shortDate } from './format'
 import { ScoreCard } from './components/ScoreCard'
 import { SignalCard } from './components/SignalCard'
@@ -43,7 +43,7 @@ function bacteriaDetail(r: BacteriaReading): string {
 
 function bacteriaNote(r: BacteriaReading): string {
   if (r.age_days != null && r.age_days > BACTERIA_HALF_WEIGHT_DAYS) {
-    return 'Too old to count in the score — rain and flow stand in'
+    return 'Too old to count in the score — the risk model stands in'
   }
   if (r.age_days == null || r.age_days > BACTERIA_FULL_WEIGHT_DAYS) {
     return 'Over a week old — counts half in the score'
@@ -133,7 +133,7 @@ function BacteriaCard({ primary }: { primary: BacteriaReading | null }) {
         primary="No data"
         secondary="No Sound Rivers or NC DEQ results available"
         detail="Check soundrivers.org/swim-guide or DEQ's advisory map"
-        note="Rain and flow signals stand in as the bacteria proxy"
+        note="The predicted risk stands in until a sample comes in"
       />
     )
   }
@@ -149,6 +149,37 @@ function BacteriaCard({ primary }: { primary: BacteriaReading | null }) {
       }`}
       detail={bacteriaDetail(primary)}
       note={bacteriaNote(primary)}
+    />
+  )
+}
+
+function chance(p: number): string {
+  return p < 0.01 ? '<1%' : `${Math.round(p * 100)}%`
+}
+
+function RiskCard({ risk }: { risk: BacteriaRisk | null }) {
+  if (risk == null) {
+    return <SignalCard title="Predicted Bacteria Risk" icon="📈" status="unknown" primary="Unavailable" detail="Risk model failed to load" />
+  }
+  const overLine = risk.probability >= risk.caution_probability
+  const floorOnly = risk.summer_storm && !overLine
+  return (
+    <SignalCard
+      title="Predicted Bacteria Risk"
+      icon="📈"
+      status={overLine || risk.summer_storm ? 'warn' : 'ok'}
+      primary={chance(risk.probability)}
+      secondary={
+        floorOnly && risk.rain_72h_in != null
+          ? `Big summer storm (${risk.rain_72h_in.toFixed(1)}" in 72h) — rated Caution`
+          : 'Chance a sample today would exceed the swim standard'
+      }
+      detail={
+        risk.missing_inputs.length > 0
+          ? `${risk.missing_inputs.join(', ')} unavailable — held at its average`
+          : `From rain, river flow & season · ${risk.trained.samples} DEQ samples ${risk.trained.years[0]}–${risk.trained.years[1]}`
+      }
+      note={`Caution at ≥${(risk.caution_probability * 100).toFixed(1)}%, or after ≥${risk.summer_floor_rain_in}" of rain in 72h May–Sep`}
     />
   )
 }
@@ -313,44 +344,51 @@ export default function App() {
             {/* Signal grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <BacteriaCard primary={data.bacteria.primary} />
+              <RiskCard risk={data.bacteria_risk} />
 
               {/* Rainfall 24h */}
               <SignalCard
                 title="Rainfall — Last 24h"
                 icon="🌧️"
-                status={rainStatus(data.weather.rain_24h_in)}
+                status={data.weather.rain_gauge_issue ? 'unknown' : rainStatus(data.weather.rain_24h_in)}
                 primary={
                   data.weather.rain_24h_in != null
                     ? `${data.weather.rain_24h_in.toFixed(2)}"`
                     : 'No data'
                 }
                 secondary={
-                  data.weather.rain_24h_in != null && data.weather.rain_24h_in > 1.0
+                  data.weather.rain_gauge_issue
+                    ? 'Gauge unreliable — may be undercounted'
+                    : data.weather.rain_24h_in != null && data.weather.rain_24h_in > 1.0
                     ? 'Heavy — runoff risk'
                     : data.weather.rain_24h_in != null && data.weather.rain_24h_in > 0.25
                     ? 'Moderate rain'
                     : 'Light / dry'
                 }
                 detail="KEWN (Craven County Airport)"
+                note={data.weather.rain_gauge_issue ?? undefined}
               />
 
               {/* Rainfall 72h */}
               <SignalCard
                 title="Rainfall — Last 72h"
                 icon="⛈️"
-                status={rain72Status(data.weather.rain_72h_in)}
+                status={data.weather.rain_gauge_issue ? 'unknown' : rain72Status(data.weather.rain_72h_in)}
                 primary={
                   data.weather.rain_72h_in != null
                     ? `${data.weather.rain_72h_in.toFixed(2)}"`
                     : 'No data'
                 }
                 secondary={
-                  data.weather.rain_72h_in != null && data.weather.rain_72h_in > 2.0
+                  data.weather.rain_gauge_issue
+                    ? 'Gauge unreliable — may be undercounted'
+                    : data.weather.rain_72h_in != null && data.weather.rain_72h_in > 2.0
                     ? 'Peak contamination window'
                     : data.weather.rain_72h_in != null && data.weather.rain_72h_in > 1.0
                     ? 'Elevated 72h accumulation'
                     : 'Dry period — low risk'
                 }
+                detail={data.weather.rain_7d_in != null ? `Last 7 days: ${data.weather.rain_7d_in.toFixed(2)}"` : undefined}
                 note="48–72h post-rain = peak risk in eastern NC"
               />
 
