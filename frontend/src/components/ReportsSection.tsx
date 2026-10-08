@@ -1,8 +1,29 @@
+import { Biohazard, ChevronDown, Fish, Sprout } from 'lucide-react'
 import type { Conditions, SewerSpill, WaterIncident } from '../types'
 import { ago, shortDate } from '../format'
 
 function distance(mi: number | null): string | null {
   return mi != null ? `${mi} mi away` : null
+}
+
+function Row({ icon: Icon, title, meta, extra }: {
+  icon: typeof Fish
+  title: React.ReactNode
+  meta: string
+  extra?: React.ReactNode
+}) {
+  return (
+    <li className="flex gap-3 py-3">
+      <span className="mt-0.5 grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg bg-surface-2">
+        <Icon className="h-4 w-4 text-ink-2" aria-hidden />
+      </span>
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-ink">{title}</div>
+        <div className="text-xs text-ink-2">{meta}</div>
+        {extra}
+      </div>
+    </li>
+  )
 }
 
 function SpillRow({ spill }: { spill: SewerSpill }) {
@@ -13,18 +34,18 @@ function SpillRow({ spill }: { spill: SewerSpill }) {
     distance(spill.distance_mi),
     spill.ongoing ? 'ongoing' : `${shortDate(spill.date)} (${ago(spill.age_days)})`,
   ].filter(Boolean)
-
   return (
-    <div className="py-2 border-b border-surface-border last:border-0">
-      <div className="text-sm text-slate-200">
-        🚱 Sewage spill{gallons != null && ` · ${gallons.toLocaleString()} gal`}
-        <span className={spill.reached_water ? 'text-red-300' : 'text-slate-500'}>
-          {spill.reached_water ? ' · reached water' : ' · did not reach water'}
-        </span>
-      </div>
-      <div className="text-xs text-slate-500">{meta.join(' · ')}</div>
-      {spill.cause && <div className="text-xs text-slate-600">Cause: {spill.cause}</div>}
-    </div>
+    <Row
+      icon={Biohazard}
+      title={
+        <>
+          Sewage spill{gallons != null && ` · ${gallons.toLocaleString()} gal`}
+          <span className="font-normal text-ink-2">{spill.reached_water ? ' · reached the water' : ' · stayed on land'}</span>
+        </>
+      }
+      meta={meta.join(' · ')}
+      extra={spill.cause && <div className="text-xs text-muted">Cause: {spill.cause}</div>}
+    />
   )
 }
 
@@ -35,24 +56,33 @@ function IncidentRow({ incident }: { incident: WaterIncident }) {
     `${shortDate(incident.date)} (${ago(incident.age_days)})`,
     incident.investigation_status && `DEQ: ${incident.investigation_status.toLowerCase()}`,
   ].filter(Boolean)
-
   return (
-    <div className="py-2 border-b border-surface-border last:border-0">
-      <div className="text-sm text-slate-200">
-        {incident.algal_bloom ? '🟢' : '🐟'} {incident.type}
-        {incident.fish_count != null && (
-          <span className="text-slate-400"> · ~{incident.fish_count.toLocaleString()} fish</span>
-        )}
-      </div>
-      <div className="text-xs text-slate-500">{meta.join(' · ')}</div>
-      {incident.location && <div className="text-xs text-slate-600">{incident.location}</div>}
-      {incident.findings && (
-        <details className="mt-1">
-          <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">DEQ findings</summary>
-          <p className="text-xs text-slate-400 mt-1 whitespace-pre-line">{incident.findings}</p>
-        </details>
-      )}
-    </div>
+    <Row
+      icon={incident.algal_bloom ? Sprout : Fish}
+      title={
+        <>
+          {incident.type}
+          {incident.fish_count != null && (
+            <span className="font-normal text-ink-2"> · ~{incident.fish_count.toLocaleString()} fish</span>
+          )}
+        </>
+      }
+      meta={meta.join(' · ')}
+      extra={
+        <>
+          {incident.location && <div className="mt-0.5 text-xs text-muted">{incident.location}</div>}
+          {incident.findings && (
+            <details className="group mt-1">
+              <summary className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-accent">
+                DEQ findings
+                <ChevronDown className="h-3 w-3 transition group-open:rotate-180" aria-hidden />
+              </summary>
+              <p className="mt-1 whitespace-pre-line text-xs text-ink-2">{incident.findings}</p>
+            </details>
+          )}
+        </>
+      }
+    />
   )
 }
 
@@ -62,22 +92,19 @@ export function ReportsSection({ reports }: { reports: Conditions['reports'] }) 
   if (spills.length === 0 && incidents.length === 0) return null
 
   return (
-    <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">📋</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            NC DEQ Reports Near River Bend
-          </span>
-        </div>
-        <span className="text-xs text-slate-600">
-          within {reports.radius_mi} mi · last {reports.lookback_days} days
+    <section className="card p-5 sm:p-6" aria-labelledby="reports-title">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="reports-title" className="text-base font-semibold text-ink">
+          NC DEQ reports nearby
+        </h2>
+        <span className="text-xs text-muted">
+          Within {reports.radius_mi} mi · last {reports.lookback_days} days
         </span>
       </div>
-      <div>
+      <ul className="mt-2 divide-y divide-line/[0.06]">
         {spills.map((s) => <SpillRow key={s.id} spill={s} />)}
         {incidents.map((i) => <IncidentRow key={i.id} incident={i} />)}
-      </div>
-    </div>
+      </ul>
+    </section>
   )
 }

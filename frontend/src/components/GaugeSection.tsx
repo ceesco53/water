@@ -1,63 +1,46 @@
+import { Gauge as GaugeIcon } from 'lucide-react'
 import type { Gauge } from '../types'
 
-interface Props {
-  upstream: Gauge
-  local: Gauge
-}
-
 function GaugeRow({ gauge }: { gauge: Gauge }) {
-  const elevated =
-    gauge.discharge_cfs != null &&
-    gauge.discharge_p80 != null &&
-    gauge.discharge_cfs > gauge.discharge_p80
+  const readings = [
+    gauge.discharge_cfs != null && { value: gauge.discharge_cfs.toFixed(0), unit: 'ft³/s flow' },
+    gauge.gage_height_ft != null && { value: gauge.gage_height_ft.toFixed(2), unit: 'ft stage' },
+  ].filter(Boolean) as { value: string; unit: string }[]
 
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 py-3 border-b border-surface-border last:border-0">
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-slate-200 truncate">{gauge.site_name}</div>
-        <div className="text-xs text-slate-500">{gauge.description} · {gauge.site_code}</div>
+    <li className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-ink">{gauge.site_name}</div>
+        <div className="text-xs text-ink-2">
+          {gauge.description} · USGS {gauge.site_code}
+        </div>
       </div>
-      <div className="flex gap-4 text-right flex-shrink-0">
-        {gauge.discharge_cfs != null && (
-          <div>
-            <div className={`text-sm font-bold tabular-nums ${elevated ? 'text-yellow-400' : 'text-slate-200'}`}>
-              {gauge.discharge_cfs.toFixed(0)}
-            </div>
-            <div className="text-xs text-slate-500">ft³/s</div>
+      <div className="flex gap-6">
+        {readings.length === 0 && <span className="text-xs text-muted">No data</span>}
+        {readings.map((r) => (
+          <div key={r.unit} className="text-right">
+            <div className="text-base font-semibold tabular-nums text-ink">{r.value}</div>
+            <div className="text-[11px] text-muted">{r.unit}</div>
           </div>
-        )}
-        {gauge.gage_height_ft != null && (
-          <div>
-            <div className="text-sm font-bold text-slate-200 tabular-nums">
-              {gauge.gage_height_ft.toFixed(2)}
-            </div>
-            <div className="text-xs text-slate-500">ft stage</div>
-          </div>
-        )}
-        {gauge.discharge_cfs == null && gauge.gage_height_ft == null && (
-          <div className="text-xs text-slate-600">No data</div>
-        )}
+        ))}
       </div>
-    </div>
+    </li>
   )
 }
 
-export function GaugeSection({ upstream, local }: Props) {
+export function GaugeSection({ upstream, local }: { upstream: Gauge; local: Gauge }) {
   return (
-    <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">📊</span>
-        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          USGS River Gauges
-        </span>
+    <section className="card p-5 sm:p-6" aria-labelledby="gauges-title">
+      <div className="flex items-center gap-2">
+        <GaugeIcon className="h-4 w-4 text-accent" aria-hidden />
+        <h2 id="gauges-title" className="text-base font-semibold text-ink">
+          USGS river gauges
+        </h2>
       </div>
-      <div>
+      <ul className="mt-2 divide-y divide-line/[0.06]">
         <GaugeRow gauge={upstream} />
         <GaugeRow gauge={local} />
-      </div>
-      <div className="mt-3 text-xs text-slate-600">
-        Yellow discharge = above the historical 80th percentile for today's date (elevated runoff)
-      </div>
-    </div>
+      </ul>
+    </section>
   )
 }

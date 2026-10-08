@@ -2,19 +2,96 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    @apply bg-surface text-slate-100 antialiased;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+/*
+ * Design tokens. Components use these by role (bg-surface, text-ink-2,
+ * bg-status-good...), never raw hex, so light and dark swap in one place.
+ * Values follow the dataviz reference palette: neutral chart surfaces and
+ * ink, a single blue accent (data marks), and four reserved status colors that
+ * always ship with an icon + label. Stored as RGB triplets so Tailwind's
+ * opacity modifiers (bg-accent/10) work.
+ *
+ * Dark is its own selected set, not an inversion. It applies when the OS asks
+ * for it (unless the viewer picked light) or when the viewer picked dark.
+ */
+:root {
+  color-scheme: light;
+  --page: 249 249 247;
+  --surface: 252 252 251;
+  --surface-2: 240 239 236;
+  --ink: 11 11 11;
+  --ink-2: 82 81 78;
+  --muted: 137 135 129;
+  --grid: 225 224 217;
+  --axis: 195 194 183;
+  --line: 11 11 11;
+  --accent: 42 120 214;
+  --accent-soft: 205 226 251;
+  --good: 12 163 12;
+  --warning: 250 178 25;
+  --serious: 236 131 90;
+  --critical: 208 59 59;
+  --shadow: 0 1px 2px rgb(11 11 11 / 0.04), 0 4px 16px rgb(11 11 11 / 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) {
+    color-scheme: dark;
+    --page: 13 13 13;
+    --surface: 26 26 25;
+    --surface-2: 56 56 53;
+    --ink: 255 255 255;
+    --ink-2: 195 194 183;
+    --muted: 137 135 129;
+    --grid: 44 44 42;
+    --axis: 56 56 53;
+    --line: 255 255 255;
+    --accent: 57 135 229;
+    --accent-soft: 24 79 149;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
   }
 }
 
-@layer utilities {
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: 13 13 13;
+  --surface: 26 26 25;
+  --surface-2: 56 56 53;
+  --ink: 255 255 255;
+  --ink-2: 195 194 183;
+  --muted: 137 135 129;
+  --grid: 44 44 42;
+  --axis: 56 56 53;
+  --line: 255 255 255;
+  --accent: 57 135 229;
+  --accent-soft: 24 79 149;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+
+@layer base {
+  body {
+    @apply bg-page text-ink antialiased;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line/10 bg-surface;
+    box-shadow: var(--shadow);
+  }
+}
+
+/* Hero waves: three layers drifting at different speeds. Decorative only,
+   and still for anyone who prefers reduced motion. */
+@keyframes wave-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.wave-layer {
+  animation: wave-drift var(--wave-duration, 24s) linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wave-layer {
+    animation: none;
   }
 }

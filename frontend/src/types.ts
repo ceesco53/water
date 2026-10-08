@@ -141,3 +141,14 @@ export interface Conditions {
   last_updated: string
   cache_age_seconds: number
 }
+
+// One logged refresh from /api/history/snapshots (backend app/history.py)
+export interface HistorySnapshot {
+  ts: string
+  score: number | null
+  rating: string | null
+  risk_probability: number | null
+  risk_caution_line: number | null
+  kewn_rain_72h: number | null
+  radar_rain_72h: number | null
+}

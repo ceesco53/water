@@ -1,53 +1,46 @@
-import clsx from 'clsx'
-
-type StatusLevel = 'ok' | 'warn' | 'danger' | 'unknown'
+import type { ReactNode } from 'react'
+import type { LucideIcon } from 'lucide-react'
+import type { StatusLevel } from '../status'
+import { StatusPill } from './StatusPill'
 
 interface Props {
   title: string
-  icon: string
+  icon: LucideIcon
   status: StatusLevel
-  primary: string
-  secondary?: string
+  statusLabel?: string
+  value: string
+  caption?: string
   detail?: string
   note?: string
+  children?: ReactNode
 }
 
-const statusColors: Record<StatusLevel, string> = {
-  ok: 'border-green-500/40 bg-green-900/10',
-  warn: 'border-yellow-500/40 bg-yellow-900/10',
-  danger: 'border-red-500/40 bg-red-900/10',
-  unknown: 'border-slate-700 bg-surface-card',
-}
-
-const dotColors: Record<StatusLevel, string> = {
-  ok: 'bg-green-400',
-  warn: 'bg-yellow-400',
-  danger: 'bg-red-400 animate-pulse',
-  unknown: 'bg-slate-500',
-}
-
-export function SignalCard({ title, icon, status, primary, secondary, detail, note }: Props) {
+export function SignalCard({ title, icon: Icon, status, statusLabel, value, caption, detail, note, children }: Props) {
   return (
-    <div className={clsx('rounded-xl border p-4 flex flex-col gap-2', statusColors[status])}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</span>
+    <article className="card flex flex-col gap-3 p-5">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-accent/10">
+            <Icon className="h-4 w-4 text-accent" aria-hidden strokeWidth={2} />
+          </span>
+          <h3 className="text-sm font-medium text-ink-2 truncate">{title}</h3>
         </div>
-        <span className={clsx('w-2 h-2 rounded-full flex-shrink-0', dotColors[status])} />
-      </div>
+        <StatusPill status={status} label={statusLabel} />
+      </header>
 
       <div>
-        <div className="text-2xl font-bold text-slate-100 tabular-nums">{primary}</div>
-        {secondary && <div className="text-sm text-slate-400 mt-0.5">{secondary}</div>}
+        <div className="text-[28px] font-semibold leading-tight tracking-tight text-ink">{value}</div>
+        {caption && <p className="mt-1 text-sm text-ink-2">{caption}</p>}
       </div>
 
-      {detail && <div className="text-xs text-slate-500">{detail}</div>}
-      {note && (
-        <div className="text-xs text-slate-600 border-t border-surface-border pt-2 mt-1 italic">
-          {note}
-        </div>
+      {children}
+
+      {(detail || note) && (
+        <footer className="mt-auto space-y-1 border-t border-line/10 pt-3">
+          {detail && <p className="text-xs text-ink-2">{detail}</p>}
+          {note && <p className="text-xs text-muted">{note}</p>}
+        </footer>
       )}
-    </div>
+    </article>
   )
 }
