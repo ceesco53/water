@@ -30,6 +30,18 @@ spec:
           env:
             - name: CACHE_TTL_SECONDS
               value: "1800"
+            - name: HISTORY_DB
+              value: /data/water-history.db
+          # HOME_LAT / HOME_LON: the address the report is for. Kept in a
+          # ConfigMap created out of band (not in this public repo); without
+          # it the app centers on River Bend's town hall.
+          envFrom:
+            - configMapRef:
+                name: water-home
+                optional: true
+          volumeMounts:
+            - name: history
+              mountPath: /data
           readinessProbe:
             httpGet:
               path: /api/health
@@ -49,3 +61,7 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+      volumes:
+        - name: history
+          persistentVolumeClaim:
+            claimName: water-history

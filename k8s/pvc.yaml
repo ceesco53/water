@@ -1,0 +1,14 @@
+# SQLite history log (app/history.py): every refresh's prediction and every
+# bacteria sample seen, for grading the risk model against River Bend.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: water-history
+  namespace: water
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

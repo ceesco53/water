@@ -44,6 +44,7 @@ kubectl create secret docker-registry ghcr-secret \
   --docker-password="$GITHUB_TOKEN" \
   --dry-run=client -o yaml | kubectl apply -n "$NAMESPACE" -f -
 
+kubectl apply -f k8s/pvc.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/ingress.yaml

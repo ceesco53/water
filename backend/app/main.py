@@ -2,13 +2,14 @@ import asyncio
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import risk_model
+from . import history, risk_model
 from .scoring import (
     BACTERIA_FULL_WEIGHT_DAYS,
     compute_score,
@@ -17,6 +18,7 @@ from .scoring import (
 )
 from .services.ncdeq_events import LOOKBACK_DAYS, RADIUS_MI, fetch_sewer_spills, fetch_water_incidents
 from .services.ncdeq_rwq import fetch_ncdeq_rwq
+from .services.radar_rain import fetch_radar_rain
 from .services.soundrivers import fetch_soundrivers_page
 from .services.usgs import fetch_usgs_data
 from .services.weather import fetch_weather_data
@@ -31,7 +33,36 @@ _cache: dict = {}
 # so an older reading is still a fair guide for the Vibrio indicator.
 _SALINITY_MAX_AGE_DAYS = 21
 
-app = FastAPI(title="River Bend Water Monitor", version="1.0.0")
+
+
+async def _refresh() -> dict:
+    """Rebuild conditions, cache them, and log them to the history DB."""
+    data = await _build_conditions()
+    _cache["data"] = data
+    _cache["ts"] = time.time()
+    await asyncio.to_thread(history.record, data)
+    return data
+
+
+async def _refresh_loop() -> None:
+    # Refresh on a timer, not only when someone loads the page, so the
+    # history log has an unbroken record to grade the model against.
+    while True:
+        try:
+            await _refresh()
+        except Exception as e:
+            logger.error("Scheduled refresh failed: %s", e)
+        await asyncio.sleep(CACHE_TTL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_refresh_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="River Bend Water Monitor", version="1.0.0", lifespan=lifespan)
 
 
 def _or_default(result, name: str, default):
@@ -51,9 +82,10 @@ def _freshest(readings: list[dict], field: str, max_age_days: int):
 
 
 async def _build_conditions() -> dict:
-    usgs_res, weather_res, sr_res, deq_res, incidents, spills = await asyncio.gather(
+    usgs_res, weather_res, radar_res, sr_res, deq_res, incidents, spills = await asyncio.gather(
         fetch_usgs_data(),
         fetch_weather_data(),
+        fetch_radar_rain(),
         fetch_soundrivers_page(),
         fetch_ncdeq_rwq(),
         fetch_water_incidents(),
@@ -62,6 +94,7 @@ async def _build_conditions() -> dict:
     )
     usgs_res = _or_default(usgs_res, "USGS", {})
     weather_res = _or_default(weather_res, "Weather", {})
+    radar_res = _or_default(radar_res, "Radar rain", {})
     sr_res = _or_default(sr_res, "Sound Rivers", [])
     deq_res = _or_default(deq_res, "NC DEQ swim sampling", [])
     incidents = _or_default(incidents, "NC DEQ fish kills", None)
@@ -69,8 +102,8 @@ async def _build_conditions() -> dict:
 
     # Sound Rivers samples River Bend itself, weekly, Memorial Day–Labor Day.
     # NC DEQ samples Union Point at the mouth of the Trent year-round. The
-    # freshest current result wins (see select_bacteria_reading) rather than
-    # a fixed source order.
+    # freshest result from the most relevant water wins (see
+    # select_bacteria_reading) rather than a fixed source order.
     readings = sr_res + deq_res
     primary = select_bacteria_reading(readings)
 
@@ -86,7 +119,11 @@ async def _build_conditions() -> dict:
         water_temp_source = weather_res.get("water_temp_source")
         water_temp_date = None
 
-    salinity_reading = _freshest(deq_res, "salinity_ppt", _SALINITY_MAX_AGE_DAYS)
+    # Salinity is site-specific -- the Neuse runs far saltier than River
+    # Bend's stretch of the Trent -- so only Trent-side samples count.
+    # (Water temperature is regional; the freshest sample anywhere will do.)
+    trent_deq = [r for r in deq_res if r.get("reach") != "neuse"]
+    salinity_reading = _freshest(trent_deq, "salinity_ppt", _SALINITY_MAX_AGE_DAYS)
     salinity_ppt = salinity_reading["salinity_ppt"] if salinity_reading else None
 
     upstream = usgs_res.get("02092500", {})
@@ -98,18 +135,29 @@ async def _build_conditions() -> dict:
     rain_gauge_issue = weather_res.get("rain_gauge_issue")
     alerts = weather_res.get("alerts")
 
-    # Chance a sample today would exceed the swim standard. When KEWN's gauge
-    # is out or missing reports, its rain is treated as unknown rather than
-    # as the zeros it reports.
+    radar_72h = radar_res.get("radar_rain_72h_in")
+    radar_7d = radar_res.get("radar_rain_7d_in")
+
+    # Chance a sample today would exceed the swim standard. The model was
+    # trained on KEWN's gauge, so that's its rain input -- unless the gauge
+    # is out or missing reports, when radar at HOME stands in rather than
+    # the zeros KEWN reports; with neither, rain is held at its average.
     flow_cfs, flow_p80 = upstream.get("discharge_cfs"), upstream.get("discharge_cfs_p80")
-    trusted_rain = rain_gauge_issue is None
+    if rain_gauge_issue is None and rain_72h is not None:
+        model_72h, model_7d, rain_source = rain_72h, rain_7d, "KEWN"
+    elif radar_72h is not None:
+        model_72h, model_7d, rain_source = radar_72h, radar_7d, "radar"
+    else:
+        model_72h, model_7d, rain_source = None, None, None
     try:
         bacteria_risk = risk_model.predict(
-            rain_72h_in=rain_72h if trusted_rain else None,
-            rain_7d_in=rain_7d if trusted_rain else None,
+            rain_72h_in=model_72h,
+            rain_7d_in=model_7d,
             flow_ratio=flow_cfs / flow_p80 if flow_cfs is not None and flow_p80 else None,
             day=datetime.now(timezone.utc).date(),
+            storm_rain_72h_in=radar_72h,
         )
+        bacteria_risk["rain_source"] = rain_source
     except Exception as e:
         logger.error("Bacteria risk model failed: %s", e)
         bacteria_risk = None
@@ -138,6 +186,10 @@ async def _build_conditions() -> dict:
             "rain_72h_in": rain_72h,
             "rain_7d_in": rain_7d,
             "rain_gauge_issue": rain_gauge_issue,
+            "radar_rain_24h_in": radar_res.get("radar_rain_24h_in"),
+            "radar_rain_72h_in": radar_72h,
+            "radar_rain_7d_in": radar_7d,
+            "radar_through": radar_res.get("radar_through"),
             "wind_speed_mph": weather_res.get("wind_speed_mph"),
             "wind_direction": weather_res.get("wind_direction"),
             "rain_forecast_pct": weather_res.get("rain_forecast_pct"),
@@ -191,9 +243,7 @@ async def get_conditions():
         data["cache_age_seconds"] = int(now - _cache["ts"])
         return data
 
-    data = await _build_conditions()
-    _cache["data"] = data
-    _cache["ts"] = now
+    data = await _refresh()
     data["cache_age_seconds"] = 0
     return data
 
@@ -201,11 +251,17 @@ async def get_conditions():
 @app.post("/api/refresh")
 async def force_refresh():
     _cache.clear()
-    data = await _build_conditions()
-    _cache["data"] = data
-    _cache["ts"] = time.time()
+    data = await _refresh()
     data["cache_age_seconds"] = 0
     return data
+
+
+@app.get("/api/history/{table}")
+async def get_history(table: str, since: str | None = None):
+    """Logged snapshots or samples (see history.py), e.g. ?since=2027-05-01."""
+    if table not in ("snapshots", "samples"):
+        raise HTTPException(status_code=404, detail="Unknown history table")
+    return await asyncio.to_thread(history.export, table, since)
 
 
 @app.get("/api/health")

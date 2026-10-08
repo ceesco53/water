@@ -177,6 +177,8 @@ function RiskCard({ risk }: { risk: BacteriaRisk | null }) {
       detail={
         risk.missing_inputs.length > 0
           ? `${risk.missing_inputs.join(', ')} unavailable — held at its average`
+          : risk.rain_source === 'radar'
+          ? 'Rain from radar at home — airport gauge unreliable'
           : `From rain, river flow & season · ${risk.trained.samples} DEQ samples ${risk.trained.years[0]}–${risk.trained.years[1]}`
       }
       note={`Caution at ≥${(risk.caution_probability * 100).toFixed(1)}%, or after ≥${risk.summer_floor_rain_in}" of rain in 72h May–Sep`}
@@ -365,7 +367,11 @@ export default function App() {
                     ? 'Moderate rain'
                     : 'Light / dry'
                 }
-                detail="KEWN (Craven County Airport)"
+                detail={
+                  data.weather.radar_rain_24h_in != null
+                    ? `KEWN airport · radar at home: ${data.weather.radar_rain_24h_in.toFixed(2)}"`
+                    : 'KEWN (Craven County Airport)'
+                }
                 note={data.weather.rain_gauge_issue ?? undefined}
               />
 
@@ -388,7 +394,11 @@ export default function App() {
                     ? 'Elevated 72h accumulation'
                     : 'Dry period — low risk'
                 }
-                detail={data.weather.rain_7d_in != null ? `Last 7 days: ${data.weather.rain_7d_in.toFixed(2)}"` : undefined}
+                detail={[
+                  data.weather.rain_7d_in != null && `7 days: ${data.weather.rain_7d_in.toFixed(2)}"`,
+                  data.weather.radar_rain_72h_in != null &&
+                    `radar at home: ${data.weather.radar_rain_72h_in.toFixed(2)}" (7d ${data.weather.radar_rain_7d_in?.toFixed(2) ?? '—'}")`,
+                ].filter(Boolean).join(' · ') || undefined}
                 note="48–72h post-rain = peak risk in eastern NC"
               />
 

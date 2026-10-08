@@ -54,12 +54,18 @@ def predict(
     rain_7d_in: float | None,
     flow_ratio: float | None,
     day: date,
+    storm_rain_72h_in: float | None = None,
 ) -> dict:
     """
     Chance of exceeding at Union Point, plus whether the warning policy's
     summer-storm floor applies. An unknown input is held at its training
     average (contributes nothing) and listed in missing_inputs, so a dead
     gauge reads as "can't tell" rather than as "no rain".
+
+    storm_rain_72h_in: another 72h rain reading (radar at HOME) for the
+    summer-storm floor only. The floor uses the wetter of it and
+    rain_72h_in, so a storm the airport gauge missed still counts; the model
+    itself keeps the gauge it was trained on.
     """
     model = load_model()
     x = features(rain_72h_in, rain_7d_in, flow_ratio, day.timetuple().tm_yday)
@@ -85,16 +91,17 @@ def predict(
 
     policy = model["policy"]
     floor = policy["summer_floor"]
+    storm_rain = max((r for r in (rain_72h_in, storm_rain_72h_in) if r is not None), default=None)
     return {
         "probability": probability,
         "caution_probability": policy["caution_probability"],
         "summer_storm": (
             day.month in floor["months"]
-            and rain_72h_in is not None
-            and rain_72h_in >= floor["rain_72h_in"]
+            and storm_rain is not None
+            and storm_rain >= floor["rain_72h_in"]
         ),
         "summer_floor_rain_in": floor["rain_72h_in"],
-        "rain_72h_in": rain_72h_in,
+        "rain_72h_in": storm_rain,
         "missing_inputs": missing,
         "trained": model["trained"],
         "validation": model["validation"],

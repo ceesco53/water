@@ -15,15 +15,19 @@ SOUNDRIVERS_URL = "https://soundrivers.org/swim-guide/"
 # the flattened page text. If Sound Rivers ever renames a site or restructures
 # the page, matches quietly drop out and the dashboard leans on NC DEQ's
 # samples alone rather than crashing or reporting stale/wrong data.
-TARGET_SITES = [
-    "River Bend",
-    "Trent Woods",
-    "Brices Creek",
-    "Lawson Creek Park",
-    "Spring Garden",
-    "Glenburnie",
-    "Pollocksville",
-]
+# Site -> which water it samples, relative to River Bend: "home" is River
+# Bend's own shoreline (the Sound Rivers site is the town's boardwalk kayak
+# launch); "trent" is the rest of the Trent and its tributaries; "neuse" is a
+# different river -- shown on the dashboard, never allowed to drive the score.
+TARGET_SITES = {
+    "River Bend": "home",
+    "Trent Woods": "trent",
+    "Brices Creek": "trent",
+    "Lawson Creek Park": "trent",
+    "Pollocksville": "trent",
+    "Spring Garden": "neuse",
+    "Glenburnie": "neuse",
+}
 
 # Every status word observed on the page as of 2026-08; anything else found
 # maps to "unknown" rather than being guessed at.
@@ -109,7 +113,7 @@ async def _fetch_and_parse() -> list[dict]:
     age_days = (datetime.now(timezone.utc).date() - sample_date).days if sample_date else None
 
     readings = []
-    for name in TARGET_SITES:
+    for name, reach in TARGET_SITES.items():
         m = re.search(rf"{re.escape(name)}\s*[-–—]\s*(pass|fail|not tested)", text, re.IGNORECASE)
         if not m:
             continue
@@ -117,6 +121,8 @@ async def _fetch_and_parse() -> list[dict]:
             "source": "Sound Rivers",
             "site_id": name.lower().replace(" ", "-"),
             "site_name": name,
+            "reach": reach,
+            "distance_mi": None,
             "status": _STATUS_MAP.get(m.group(1).lower(), "unknown"),
             "advisory": None,
             "sample_date": sample_date.isoformat() if sample_date else None,

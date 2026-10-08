@@ -1,6 +1,6 @@
 # Bacteria-risk model: does it beat the original formula?
 
-Target: the chance a sample drawn that morning meets or exceeds NC's standard (≥104 MPN). 882 samples with confirmed rain, 35 exceedances (4.0%). Every number below is **out of sample** — leave-one-year-out unless noted.
+Target: the chance a sample drawn that morning meets or exceeds NC's standard (≥104 MPN). 883 samples with confirmed rain, 35 exceedances (4.0%). Every number below is **out of sample** — leave-one-year-out unless noted.
 
 ## 1. All candidates
 
@@ -8,23 +8,23 @@ Target: the chance a sample drawn that morning meets or exceeds NC's standard (�
 
 | Model | AUC | AUC 95% CI | Brier | Brier skill | Log loss |
 |---|---|---|---|---|---|
-| Base rate only | 0.50 | — | 0.0382 | +0.0% | 0.1680 |
-| Original formula (rescaled) | 0.74 | 0.66–0.83 | 0.0365 | +4.5% | 0.1512 |
-| Logistic: rain | 0.71 | 0.62–0.81 | 0.0375 | +1.8% | 0.1567 |
-| Tobit: rain | 0.70 | 0.59–0.80 | 0.0376 | +1.5% | 0.1616 |
-| Logistic: rain + flow | 0.74 | 0.63–0.83 | 0.0371 | +2.9% | 0.1543 |
-| Tobit: rain + flow | 0.70 | 0.60–0.80 | 0.0371 | +2.8% | 0.1584 |
-| Logistic: rain + flow + season | 0.76 | 0.66–0.85 | 0.0339 | +11.1% | 0.1440 |
-| Tobit: rain + flow + season | 0.76 | 0.67–0.85 | 0.0350 | +8.3% | 0.1481 |
-| Logistic: rain + flow + season + site | 0.78 | 0.69–0.86 | 0.0330 | +13.5% | 0.1396 |
-| Tobit: rain + flow + season + site | 0.79 | 0.71–0.86 | 0.0343 | +10.2% | 0.1424 |
+| Base rate only | 0.50 | — | 0.0381 | +0.0% | 0.1679 |
+| Original formula (rescaled) | 0.74 | 0.65–0.83 | 0.0364 | +4.5% | 0.1510 |
+| Logistic: rain | 0.71 | 0.62–0.80 | 0.0375 | +1.8% | 0.1565 |
+| Tobit: rain | 0.70 | 0.59–0.79 | 0.0376 | +1.5% | 0.1614 |
+| Logistic: rain + flow | 0.74 | 0.64–0.83 | 0.0370 | +2.9% | 0.1541 |
+| Tobit: rain + flow | 0.70 | 0.60–0.80 | 0.0371 | +2.8% | 0.1582 |
+| Logistic: rain + flow + season | 0.76 | 0.66–0.85 | 0.0339 | +11.2% | 0.1439 |
+| Tobit: rain + flow + season | 0.76 | 0.66–0.85 | 0.0350 | +8.4% | 0.1479 |
+| Logistic: rain + flow + season + site | 0.78 | 0.69–0.85 | 0.0330 | +13.5% | 0.1394 |
+| Tobit: rain + flow + season + site | 0.79 | 0.71–0.86 | 0.0343 | +10.2% | 0.1422 |
 
 Best by Brier: **Logistic: rain + flow + season + site** — refit on all samples and exported.
 
 ## 2. Best model vs the original formula, same days
 
 - AUC 0.78 vs 0.74: difference 95% CI -0.02 to +0.10
-- Brier 0.0330 vs 0.0365: difference 95% CI -0.0075 to +0.0005 (negative favors the model)
+- Brier 0.0330 vs 0.0364: difference 95% CI -0.0075 to +0.0004 (negative favors the model)
 - A CI that straddles zero means the data can't tell them apart.
 
 ## 3. Same false alarms, more catches?
@@ -43,21 +43,21 @@ Out-of-sample predictions grouped by predicted chance, against what actually hap
 
 | Predicted | Days | Mean predicted | Exceedances | Observed rate |
 |---|---|---|---|---|
-| <2% | 497 | 0.9% | 5 | 1.0% |
-| 2–5% | 193 | 3.2% | 11 | 5.7% |
-| 5–10% | 111 | 6.9% | 5 | 4.5% |
-| 10–20% | 49 | 12.9% | 2 | 4.1% |
+| <2% | 499 | 0.9% | 5 | 1.0% |
+| 2–5% | 192 | 3.2% | 11 | 5.7% |
+| 5–10% | 112 | 7.0% | 5 | 4.5% |
+| 10–20% | 48 | 12.9% | 2 | 4.2% |
 | ≥20% | 32 | 32.1% | 12 | 37.5% |
 
 ## 5. Forward test: fit on ≤2016, predict 2017+
 
-345 test samples, 17 exceedances.
+346 test samples, 17 exceedances.
 
 | Model | AUC | Brier | Brier skill |
 |---|---|---|---|
-| Base rate only | 0.50 | 0.0471 | +0.0% |
-| Original formula (rescaled) | 0.75 | 0.0428 | +9.1% |
-| Logistic: rain + flow + season + site | 0.79 | 0.0400 | +15.1% |
+| Base rate only | 0.50 | 0.0470 | +0.0% |
+| Original formula (rescaled) | 0.75 | 0.0427 | +9.1% |
+| Logistic: rain + flow + season + site | 0.79 | 0.0399 | +15.1% |
 
 ## 6. What the model learned
 

@@ -18,8 +18,15 @@ const badgeClass: Record<BacteriaReading['status'], string> = {
   unknown: 'bg-slate-700 text-slate-400 border-slate-600',
 }
 
+const reachLabel: Record<BacteriaReading['reach'], string> = {
+  home: 'your stretch',
+  trent: 'Trent River',
+  neuse: 'Neuse · not scored',
+}
+
 function readingDetail(r: BacteriaReading): string {
-  const parts: string[] = [r.source]
+  const parts: string[] = [r.source, reachLabel[r.reach]]
+  if (r.distance_mi != null) parts.push(`${r.distance_mi} mi`)
   parts.push(r.sample_date ? `${shortDate(r.sample_date)} (${ago(r.age_days)})` : 'date unknown')
   if (r.mpn != null) parts.push(`${r.mpn} MPN`)
   if (r.geomean_mpn != null) parts.push(`30d geomean ${r.geomean_mpn}`)
@@ -41,7 +48,7 @@ export function BacteriaSites({ readings, primary, seasonLabel }: Props) {
       <div>
         {readings.map((r) => {
           const isPrimary = primary != null && r.source === primary.source && r.site_id === primary.site_id
-          const stale = r.age_days != null && r.age_days > STALE_DAYS
+          const stale = (r.age_days != null && r.age_days > STALE_DAYS) || r.reach === 'neuse'
           return (
             <div
               key={`${r.source}-${r.site_id}`}
@@ -66,8 +73,9 @@ export function BacteriaSites({ readings, primary, seasonLabel }: Props) {
       </div>
       <div className="mt-3 text-xs text-slate-600 space-y-1">
         <p>
-          Score uses the worst result sampled in the last 7 days; with none that recent, the newest
-          result at reduced weight. Faded rows are over {STALE_DAYS} days old.
+          Score uses the freshest results from the closest water — River Bend's shoreline first, then
+          the rest of the Trent — and the worst of those from the last 7 days. Faded rows are over{' '}
+          {STALE_DAYS} days old or on the Neuse, which never drives the score.
         </p>
         <p>
           <a href="https://soundrivers.org/swim-guide/" target="_blank" rel="noreferrer" className="underline hover:text-slate-400">

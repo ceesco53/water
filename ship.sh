@@ -82,7 +82,10 @@ fi
 # ── Deploy ───────────────────────────────────────────────────────────────────
 echo ""
 echo "→ Deploying $IMAGE:${sha:0:7}"
-kubectl set image deployment/water "water=$IMAGE:$sha" -n "$NAMESPACE"
+# Apply the manifests too, so changes to k8s/ ship with the code -- with the
+# deployment's image pinned to this commit's build instead of :latest.
+kubectl apply -f k8s/namespace.yaml -f k8s/pvc.yaml -f k8s/service.yaml -f k8s/ingress.yaml
+sed "s|image: $IMAGE:latest|image: $IMAGE:$sha|" k8s/deployment.yaml | kubectl apply -f -
 kubectl rollout status deployment/water -n "$NAMESPACE" --timeout=180s
 
 if curl -fsS --max-time 30 "$SITE/api/health" >/dev/null; then

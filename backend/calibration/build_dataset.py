@@ -16,6 +16,10 @@ sample was drawn:
   prev_*               the site's previous sample, since a sample's own
                        salinity and temperature aren't known until it's taken
 
+  kewn_/mrms_/stage4_   daily rain the 3 full days before the sample day (d1_3)
+  d1_3, d4_7           and the 4 before those (d4_7), from KEWN and from radar
+                       at the site (IEM; 2014 on) -- see compare_rain.py
+
 Labels: mpn, and exceeds = mpn >= 104 (NC's single-sample standard). The
 sample's own salinity/temperature are kept as obs_* for analysis only --
 using them as predictors would leak the answer.
@@ -37,6 +41,7 @@ else is refetched each run. Writes calibration/data/samples.csv.
 import bisect
 import csv
 import io
+import json
 import math
 import re
 import time
@@ -64,6 +69,11 @@ IEM_ASOS = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 NCEI_DAILY = "https://www.ncei.noaa.gov/access/services/data/v1"
 KEWN_GHCN_ID = "USW00093719"  # New Bern Coastal Carolina Regional Airport
 USGS_DAILY = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/daily/items"
+IEMRE_MULTIDAY = "https://mesonet.agron.iastate.edu/iemre/multiday/{start}/{end}/{lat:.4f}/{lon:.4f}/json"
+RADAR_FIRST_YEAR = 2014  # MRMS daily totals in IEMRE start here
+
+# DEQ station coordinates (stations layer), for radar rain at each site
+SITE_COORDS = {"C100A": (35.1031, -77.0349), "C99": (35.0646, -76.9702)}
 
 RAIN_WINDOWS_H = {"rain_24h": 24, "rain_48h": 48, "rain_72h": 72, "rain_7d": 168}
 
@@ -218,6 +228,37 @@ def fetch_trenton_daily(client: httpx.Client, start: date, end: date) -> dict[da
     return flows
 
 
+# ── Radar rain at each site (IEM) ────────────────────────────────────────────
+
+def fetch_site_radar(client: httpx.Client, site: str, first_year: int, last_year: int) -> dict[date, dict]:
+    """
+    Daily radar rain at a DEQ site: MRMS (radar, gauge-corrected) and IEMRE's
+    Stage IV-based total. Lets compare_rain test whether rain *at the site*
+    predicts exceedances better than KEWN's gauge miles away.
+    """
+    lat, lon = SITE_COORDS[site]
+    out: dict[date, dict] = {}
+    for year in range(max(first_year, RADAR_FIRST_YEAR), last_year + 1):
+        cache = CACHE / f"radar_{site}_{year}.json"
+        if cache.exists():
+            text = cache.read_text()
+        else:
+            end = min(date(year, 12, 31), date.today())
+            resp = client.get(IEMRE_MULTIDAY.format(start=f"{year}-01-01", end=end.isoformat(), lat=lat, lon=lon))
+            resp.raise_for_status()
+            text = resp.text
+            if year < datetime.now(timezone.utc).year:
+                CACHE.mkdir(parents=True, exist_ok=True)
+                cache.write_text(text)
+            time.sleep(1)
+        for row in json.loads(text).get("data", []):
+            out[date.fromisoformat(row["date"])] = {
+                "mrms": _num(row.get("mrms_precip_in")),
+                "stage4": _num(row.get("daily_precip_in")),
+            }
+    return out
+
+
 # ── Assembly ─────────────────────────────────────────────────────────────────
 
 def build() -> pd.DataFrame:
@@ -238,6 +279,9 @@ def build() -> pd.DataFrame:
         print("Fetching Trenton daily discharge (USGS)…")
         flows = fetch_trenton_daily(client, first - timedelta(days=7), last)
         print(f"  {len(flows)} days")
+
+        print("Fetching radar rain at each site (IEM)…")
+        radar = {site: fetch_site_radar(client, site, first.year, last.year) for site in SITE_COORDS}
 
     # Yearly QA: hourly-METAR totals vs NOAA's daily record for the station
     hourly_by_year: dict[int, float] = {}
@@ -300,6 +344,19 @@ def build() -> pd.DataFrame:
         row["rain_coverage_7d"] = round(reports / RAIN_WINDOWS_H["rain_7d"], 3)
         row["rain_year_ratio"] = round(year_ratio.get(local_day.year, math.nan), 3)
         row["rain_check"] = rain_check(local_day)
+
+        # Daily-resolution rain for compare_rain: the 3 full days before the
+        # sample day and the 4 before those, from KEWN and from radar at the site
+        near = [local_day - timedelta(days=k) for k in (1, 2, 3)]
+        far = [local_day - timedelta(days=k) for k in (4, 5, 6, 7)]
+        row["kewn_d1_3"] = round(sum(hourly_by_lst_day.get(d, 0.0) for d in near), 2)
+        row["kewn_d4_7"] = round(sum(hourly_by_lst_day.get(d, 0.0) for d in far), 2)
+        site_radar = radar.get(s.site, {})
+        for product in ("mrms", "stage4"):
+            for name, days in (("d1_3", near), ("d4_7", far)):
+                vals = [site_radar.get(d, {}).get(product) for d in days]
+                ok = all(v is not None and not math.isnan(v) for v in vals)
+                row[f"{product}_{name}"] = round(sum(vals), 2) if ok else math.nan
 
         flow = flows.get(local_day - timedelta(days=1), math.nan)
         p80 = discharge_p80(local_day)

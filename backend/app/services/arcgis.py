@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 
 import httpx
 
-from ..geo import RIVER_BEND_LAT, RIVER_BEND_LON
+from ..geo import HOME_LAT, HOME_LON
 
 # NC DEQ's ArcGIS Online organization — swim advisories, fish kills / algal
 # blooms, and sewer overflows are all public feature services under it.
@@ -35,10 +35,10 @@ async def query_layer(client: httpx.AsyncClient, service: str, layer: int, **par
     return rows
 
 
-def within_miles_of_river_bend(miles: float) -> dict:
-    """Spatial-filter params: features within `miles` of River Bend, geometry returned as WGS84 lat/lon."""
+def within_miles_of_home(miles: float) -> dict:
+    """Spatial-filter params: features within `miles` of HOME, geometry returned as WGS84 lat/lon."""
     return {
-        "geometry": f"{RIVER_BEND_LON},{RIVER_BEND_LAT}",
+        "geometry": f"{HOME_LON},{HOME_LAT}",
         "geometryType": "esriGeometryPoint",
         "inSR": 4326,
         "distance": miles,

@@ -1,20 +1,20 @@
 # Baseline: how well does today's formula predict bacteria exceedances?
 
-Graded on **882 NC DEQ samples** (1998–2026, Union Point and NW Creek) with rainfall confirmed against NOAA's daily record; 48 more were left out because KEWN's hourly rain disagreed with it or couldn't be checked. **35 exceeded** NC's single-sample standard (≥104 MPN) — 4.0%.
+Graded on **883 NC DEQ samples** (1998–2026, Union Point and NW Creek) with rainfall confirmed against NOAA's daily record; 48 more were left out because KEWN's hourly rain disagreed with it or couldn't be checked. **35 exceeded** NC's single-sample standard (≥104 MPN) — 4.0%.
 
 Each sample morning is scored the way the original dashboard did when it had no fresh bacteria result: its 24h/72h rain and upstream-flow rules (max penalty −45, frozen in `legacy_formula.py`), plus the −5 for missing bacteria data.
 
 ## 1. Overall
 
-**AUC 0.74** (95% CI 0.66–0.83) — the chance that a random exceedance day got a bigger rain/flow penalty than a random clean day. 0.5 is a coin flip, 1.0 is perfect.
+**AUC 0.74** (95% CI 0.65–0.83) — the chance that a random exceedance day got a bigger rain/flow penalty than a random clean day. 0.5 is a coin flip, 1.0 is perfect.
 
-Swim season only (May–Sep): AUC 0.72 (95% CI 0.54–0.89) on 466 samples with just 10 exceedances (2.1%) — too few to grade summer on its own with confidence.
+Swim season only (May–Sep): AUC 0.72 (95% CI 0.53–0.90) on 467 samples with just 10 exceedances (2.1%) — too few to grade summer on its own with confidence.
 
 ## 2. What the dashboard would have shown
 
 | Rating | Exceedance days | Clean days | Exceedance rate |
 |---|---|---|---|
-| Excellent | 25 | 797 | 3.0% |
+| Excellent | 25 | 798 | 3.0% |
 | Good | 6 | 39 | 13.3% |
 | Caution | 4 | 11 | 26.7% |
 | Avoid Swimming | 0 | 0 | — |
@@ -25,20 +25,20 @@ If the dashboard warned whenever the rain/flow penalty reached a given level: ho
 
 | Warn at penalty ≤ | Exceedances caught | Clean days flagged | Precision | False alarms / season |
 |---|---|---|---|---|
-| -35 | 2/35 (6%) | 2/847 (0.2%) | 50% | ≈1 days |
-| -28 | 4/35 (11%) | 11/847 (1.3%) | 27% | ≈2 days |
-| -25 | 5/35 (14%) | 18/847 (2.1%) | 22% | ≈4 days |
-| -20 | 6/35 (17%) | 23/847 (2.7%) | 21% | ≈6 days |
-| -18 | 10/35 (29%) | 45/847 (5.3%) | 18% | ≈11 days |
-| -15 | 10/35 (29%) | 50/847 (5.9%) | 17% | ≈13 days |
-| -10 | 24/35 (69%) | 206/847 (24.3%) | 10% | ≈45 days |
-| -8 | 25/35 (71%) | 244/847 (28.8%) | 9% | ≈53 days |
+| -35 | 2/35 (6%) | 2/848 (0.2%) | 50% | ≈1 days |
+| -28 | 4/35 (11%) | 11/848 (1.3%) | 27% | ≈2 days |
+| -25 | 5/35 (14%) | 18/848 (2.1%) | 22% | ≈4 days |
+| -20 | 6/35 (17%) | 23/848 (2.7%) | 21% | ≈6 days |
+| -18 | 10/35 (29%) | 45/848 (5.3%) | 18% | ≈11 days |
+| -15 | 10/35 (29%) | 50/848 (5.9%) | 17% | ≈13 days |
+| -10 | 24/35 (69%) | 206/848 (24.3%) | 10% | ≈45 days |
+| -8 | 25/35 (71%) | 244/848 (28.8%) | 9% | ≈53 days |
 
 ## 4. By site
 
 | Site | Samples | Exceedances | AUC |
 |---|---|---|---|
-| C100A | 432 | 26 | 0.78 |
+| C100A | 433 | 26 | 0.78 |
 | C99 | 450 | 9 | 0.65 |
 
 ## 5. Where the signal is: each input on its own
@@ -47,16 +47,16 @@ AUC of each candidate input by itself (rows missing that input are skipped). Dir
 
 | Input | n | Exceedances | AUC | 95% CI | Direction |
 |---|---|---|---|---|---|
-| Rain, 72h before | 882 | 35 | 0.73 | 0.64–0.82 | higher → more |
-| Rain, 7 days before | 882 | 35 | 0.69 | 0.60–0.78 | higher → more |
-| Trenton flow (cfs) | 882 | 35 | 0.68 | 0.56–0.78 | higher → more |
-| Trenton flow ÷ day-of-year p80 | 882 | 35 | 0.67 | 0.56–0.77 | higher → more |
-| Rain, 48h before | 882 | 35 | 0.66 | 0.56–0.76 | higher → more |
-| Previous sample's water temp | 881 | 35 | 0.61 | 0.52–0.69 | lower → more |
-| Rain, 24h before sample | 882 | 35 | 0.59 | 0.49–0.69 | higher → more |
-| Rain noted by DEQ sampler | 882 | 35 | 0.56 | 0.49–0.64 | higher → more |
-| Previous sample's salinity | 881 | 35 | 0.52 | 0.42–0.62 | lower → more |
-| Previous sample's MPN | 881 | 35 | 0.51 | 0.41–0.61 | lower → more |
+| Rain, 72h before | 883 | 35 | 0.73 | 0.64–0.82 | higher → more |
+| Rain, 7 days before | 883 | 35 | 0.69 | 0.60–0.77 | higher → more |
+| Trenton flow (cfs) | 883 | 35 | 0.68 | 0.56–0.79 | higher → more |
+| Trenton flow ÷ day-of-year p80 | 883 | 35 | 0.67 | 0.56–0.77 | higher → more |
+| Rain, 48h before | 883 | 35 | 0.66 | 0.56–0.76 | higher → more |
+| Previous sample's water temp | 882 | 35 | 0.61 | 0.52–0.70 | lower → more |
+| Rain, 24h before sample | 883 | 35 | 0.59 | 0.50–0.69 | higher → more |
+| Rain noted by DEQ sampler | 883 | 35 | 0.56 | 0.49–0.63 | higher → more |
+| Previous sample's salinity | 882 | 35 | 0.52 | 0.41–0.63 | lower → more |
+| Previous sample's MPN | 882 | 35 | 0.51 | 0.42–0.61 | lower → more |
 
 ## 6. Exceedances by month
 
@@ -70,7 +70,7 @@ AUC of each candidate input by itself (rows missing that input are skipped). Dir
 | 6 | 97 | 6 | 6.2% |
 | 7 | 95 | 1 | 1.1% |
 | 8 | 92 | 0 | 0.0% |
-| 9 | 85 | 2 | 2.4% |
+| 9 | 86 | 2 | 2.3% |
 | 10 | 97 | 4 | 4.1% |
 | 11 | 46 | 4 | 8.7% |
 | 12 | 48 | 6 | 12.5% |

@@ -12,6 +12,9 @@ export interface BacteriaReading {
   source: 'Sound Rivers' | 'NC DEQ'
   site_id: string
   site_name: string
+  // "home" = River Bend's shoreline, "trent" = rest of the Trent; "neuse" sites are shown, never scored
+  reach: 'home' | 'trent' | 'neuse'
+  distance_mi: number | null
   status: BacteriaStatus
   advisory: string | null
   sample_date: string | null
@@ -67,6 +70,8 @@ export interface BacteriaRisk {
   summer_floor_rain_in: number
   rain_72h_in: number | null
   missing_inputs: string[]
+  // Which rain fed the model: KEWN's gauge, or radar at home when the gauge is unreliable
+  rain_source: 'KEWN' | 'radar' | null
   trained: { date: string; samples: number; exceedances: number; years: [number, number] }
   validation: { loyo_auc: number; loyo_brier: number; base_rate_brier: number; formula_auc: number }
 }
@@ -96,6 +101,11 @@ export interface Conditions {
     rain_7d_in: number | null
     // Set when KEWN's gauge is out (PNO) or missing reports; rain may be undercounted
     rain_gauge_issue: string | null
+    // Stage IV radar at home, through radar_through (~3h ago); null if unavailable
+    radar_rain_24h_in: number | null
+    radar_rain_72h_in: number | null
+    radar_rain_7d_in: number | null
+    radar_through: string | null
     wind_speed_mph: number | null
     wind_direction: string | null
     rain_forecast_pct: number | null

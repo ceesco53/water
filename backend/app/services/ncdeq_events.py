@@ -3,8 +3,8 @@ from datetime import timedelta
 
 import httpx
 
-from ..geo import miles_from_river_bend
-from .arcgis import epoch_ms_to_date, query_layer, since, utc_today, within_miles_of_river_bend
+from ..geo import miles_from_home
+from .arcgis import epoch_ms_to_date, query_layer, since, utc_today, within_miles_of_home
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def _distance(row: dict, lat_key: str = "lat", lon_key: str = "lon") -> float | 
     lat, lon = row.get(lat_key), row.get(lon_key)
     if lat is None or lon is None:
         return None
-    return round(miles_from_river_bend(lat, lon), 1)
+    return round(miles_from_home(lat, lon), 1)
 
 
 async def fetch_water_incidents() -> list[dict] | None:
@@ -52,7 +52,7 @@ async def fetch_water_incidents() -> list[dict] | None:
             rows = await query_layer(
                 client, FISH_KILL_SERVICE, 0,
                 where=since("observation_date", today - timedelta(days=LOOKBACK_DAYS)),
-                **within_miles_of_river_bend(RADIUS_MI),
+                **within_miles_of_home(RADIUS_MI),
             )
     except Exception as e:
         logger.warning("NC DEQ fish kill / algal bloom fetch failed: %s", e)
@@ -97,7 +97,7 @@ async def fetch_sewer_spills() -> list[dict] | None:
             rows = await query_layer(
                 client, SSO_SERVICE, 0,
                 where=since("dwr_start_date", today - timedelta(days=LOOKBACK_DAYS)),
-                **within_miles_of_river_bend(RADIUS_MI),
+                **within_miles_of_home(RADIUS_MI),
             )
     except Exception as e:
         logger.warning("NC DEQ sewer overflow fetch failed: %s", e)

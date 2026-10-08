@@ -5,7 +5,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from ..geo import RIVER_BEND_LAT, RIVER_BEND_LON
+from ..geo import HOME_LAT, HOME_LON
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ async def fetch_nws_alerts() -> list[dict] | None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{NOAA_BASE}/alerts/active",
-                params={"point": f"{RIVER_BEND_LAT},{RIVER_BEND_LON}"},
+                params={"point": f"{HOME_LAT},{HOME_LON}"},
                 headers=NOAA_HEADERS,
             )
             resp.raise_for_status()

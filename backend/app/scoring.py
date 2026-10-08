@@ -22,25 +22,47 @@ SPILL_SCORE_DAYS = 5
 _ALERT_IMPACT = {"Extreme": -50, "Severe": -30, "Moderate": -10}
 
 
+# How directly a site's water reflects River Bend's: its own shoreline first,
+# then the rest of the Trent. Neuse sites are a different river -- shown on
+# the dashboard, never allowed to drive the score.
+_REACH_RANK = {"home": 0, "trent": 1}
+
+
 def select_bacteria_reading(readings: list[dict]) -> Optional[dict]:
     """
-    Pick the bacteria reading that drives the score. Every reading sampled
-    within the last week counts as current, and the worst of those wins — a
-    fresh fail at River Bend shouldn't be outvoted by a fresh pass six miles
-    away. With nothing that recent, the newest reading wins regardless of
-    source, and compute_score discounts it by age. (Previously a fixed source
-    priority let a month-old Sound Rivers result override a 6-day-old DEQ one.)
+    Pick the bacteria reading that drives the score. Freshness comes first:
+    if anything was sampled in the last week, the score uses the most relevant
+    reach that has a result that recent (River Bend's own shoreline over the
+    rest of the Trent), and the worst result within it. Otherwise the same for
+    the second week, newest first; past that, the newest result at all, which
+    compute_score treats as too old to count. Neuse sites never qualify.
+
+    Earlier versions ignored where a site was: a fixed source priority once let
+    a month-old result override a 6-day-old one, and "worst of the freshest"
+    let a fresh NW Creek sample -- on the Neuse, ~10 mi from River Bend --
+    outrank Union Point at the mouth of the Trent.
     """
-    known = [r for r in readings if r.get("status") in _BACTERIA_IMPACT]
-    if not known:
+    eligible = [
+        r for r in readings
+        if r.get("status") in _BACTERIA_IMPACT and r.get("reach") in _REACH_RANK
+    ]
+    if not eligible:
         return None
-    dated = [r for r in known if r.get("age_days") is not None]
-    current = [r for r in dated if r["age_days"] <= BACTERIA_FULL_WEIGHT_DAYS]
-    if current:
-        return max(current, key=lambda r: (STATUS_RANK[r["status"]], -r["age_days"]))
+
+    dated = [r for r in eligible if r.get("age_days") is not None]
+    for max_age, pick_worst in ((BACTERIA_FULL_WEIGHT_DAYS, True), (BACTERIA_HALF_WEIGHT_DAYS, False)):
+        window = [r for r in dated if r["age_days"] <= max_age]
+        if not window:
+            continue
+        nearest = min(_REACH_RANK[r["reach"]] for r in window)
+        reach = [r for r in window if _REACH_RANK[r["reach"]] == nearest]
+        if pick_worst:
+            return max(reach, key=lambda r: (STATUS_RANK[r["status"]], -r["age_days"]))
+        return min(reach, key=lambda r: r["age_days"])
+
     if dated:
-        return min(dated, key=lambda r: r["age_days"])
-    return known[0]
+        return min(dated, key=lambda r: (r["age_days"], _REACH_RANK[r["reach"]]))
+    return eligible[0]
 
 
 def _bacteria_factor(reading: Optional[dict]) -> dict:
@@ -136,7 +158,12 @@ _BELOW_CAUTION_MAX_IMPACT = -25
 def _risk_factor(risk: dict) -> dict:
     p, line = risk["probability"], risk["caution_probability"]
     chance = f"{p:.0%}" if p >= 0.01 else "<1%"
-    unknown = f" ({', '.join(risk['missing_inputs'])} unavailable)" if risk["missing_inputs"] else ""
+    notes = []
+    if risk.get("rain_source") == "radar":
+        notes.append("rain from radar — airport gauge unreliable")
+    if risk["missing_inputs"]:
+        notes.append(f"{', '.join(risk['missing_inputs'])} unavailable")
+    unknown = f" ({'; '.join(notes)})" if notes else ""
     if p >= line:
         return {"label": "Bacteria Risk", "impact": _CAUTION_IMPACT,
                 "reason": f"{chance} chance of exceeding the swim standard — over the "
