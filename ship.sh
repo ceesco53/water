@@ -88,10 +88,15 @@ kubectl apply -f k8s/namespace.yaml -f k8s/pvc.yaml -f k8s/service.yaml -f k8s/i
 sed "s|image: $IMAGE:latest|image: $IMAGE:$sha|" k8s/deployment.yaml | kubectl apply -f -
 kubectl rollout status deployment/water -n "$NAMESPACE" --timeout=180s
 
-if curl -fsS --max-time 30 "$SITE/api/health" >/dev/null; then
-  echo ""
-  echo "✓ Shipped ${sha:0:7} — $SITE"
-else
-  echo "ERROR: rolled out, but $SITE/api/health isn't responding"
-  exit 1
-fi
+# The ingress can answer 502 for a few seconds while it switches from the old
+# pod to the new one, so retry before calling it a failure.
+for attempt in 1 2 3 4 5 6; do
+  if curl -fsS --max-time 30 "$SITE/api/health" >/dev/null 2>&1; then
+    echo ""
+    echo "✓ Shipped ${sha:0:7} — $SITE"
+    exit 0
+  fi
+  sleep 5
+done
+echo "ERROR: rolled out, but $SITE/api/health still isn't responding after 30s"
+exit 1
