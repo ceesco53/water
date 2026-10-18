@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
-  Activity,
   Biohazard,
   CalendarClock,
-  CloudDrizzle,
   CloudRain,
   Fish,
   FlaskConical,
   Microscope,
   ShieldAlert,
   Thermometer,
+  Waves,
   Wind,
   Zap,
   type LucideIcon,
@@ -23,7 +22,7 @@ import { FactorBreakdown } from './components/FactorBreakdown'
 import { Trends } from './components/Trends'
 import { SignalCard } from './components/SignalCard'
 import { Meter } from './components/Meter'
-import { GaugeSection } from './components/GaugeSection'
+import { WaterLevels } from './components/WaterLevels'
 import { AlertsBanner } from './components/AlertsBanner'
 import { BacteriaSites } from './components/BacteriaSites'
 import { ReportsSection } from './components/ReportsSection'
@@ -152,7 +151,7 @@ function Section({ icon: Icon, title, subtitle, children }: {
   const id = `section-${title.toLowerCase().replace(/\W+/g, '-')}`
   return (
     <section aria-labelledby={id} className="space-y-4">
-      <div className="flex items-end gap-3">
+      <div className="flex items-center gap-3">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-white shadow-sm">
           <Icon className="h-[18px] w-[18px]" aria-hidden />
         </span>
@@ -234,6 +233,57 @@ function RiskCard({ risk }: { risk: BacteriaRisk | null }) {
         fillClass={overLine ? 'bg-status-warning' : 'bg-accent'}
         label="Predicted bacteria risk against the Caution line"
       />
+    </SignalCard>
+  )
+}
+
+/** Airport gauge vs radar at home, over 24h / 72h / 7 days, in one card. */
+function RainCard({ weather: w }: { weather: Conditions['weather'] }) {
+  const cell = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)}"` : '—')
+  const rows: [string, (number | null)[]][] = [
+    ['Airport', [w.rain_24h_in, w.rain_72h_in, w.rain_7d_in]],
+  ]
+  if (w.radar_rain_72h_in != null) rows.push(['At home', [w.radar_rain_24h_in, w.radar_rain_72h_in, w.radar_rain_7d_in]])
+  return (
+    <SignalCard
+      title="Rain"
+      icon={CloudRain}
+      status={w.rain_gauge_issue ? 'unknown' : rain72Status(w.rain_72h_in)}
+      statusLabel={
+        w.rain_gauge_issue
+          ? 'Gauge issue'
+          : w.rain_72h_in != null && w.rain_72h_in > 2.0
+          ? 'Heavy'
+          : w.rain_72h_in != null && w.rain_72h_in > 1.0
+          ? 'Wet'
+          : 'Dry'
+      }
+      value={cell(w.rain_72h_in)}
+      caption="Last 72 hours, airport gauge"
+      note={w.rain_gauge_issue ?? 'Bacteria peak 48–72 hours after rain'}
+    >
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-muted">
+            <th className="pb-1 text-left font-normal" />
+            <th className="pb-1 text-right font-normal">24 h</th>
+            <th className="pb-1 text-right font-normal">72 h</th>
+            <th className="pb-1 text-right font-normal">7 days</th>
+          </tr>
+        </thead>
+        <tbody className="tabular-nums text-ink">
+          {rows.map(([name, vals]) => (
+            <tr key={name} className="border-t border-line/[0.06]">
+              <td className="py-1.5 text-ink-2">{name}</td>
+              {vals.map((v, i) => (
+                <td key={i} className="py-1.5 text-right">
+                  {cell(v)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </SignalCard>
   )
 }
@@ -361,7 +411,7 @@ export default function App() {
             <div className="space-y-12">
               {data.alerts && <AlertsBanner alerts={data.alerts} />}
 
-              <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
                 <FactorBreakdown score={data.score} factors={data.score_factors} />
                 <Trends history={history} days={HISTORY_DAYS} />
               </div>
@@ -415,53 +465,10 @@ export default function App() {
               </Section>
 
               <Section icon={CloudRain} title="Weather" subtitle="Rain drives runoff; lightning drives you out of the water">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <RainCard weather={w} />
                   <SignalCard
-                    title="Rain, last 24 hours"
-                    icon={CloudDrizzle}
-                    status={w.rain_gauge_issue ? 'unknown' : rainStatus(w.rain_24h_in)}
-                    statusLabel={w.rain_gauge_issue ? 'Gauge issue' : undefined}
-                    value={w.rain_24h_in != null ? `${w.rain_24h_in.toFixed(2)}"` : 'No data'}
-                    caption={
-                      w.rain_gauge_issue
-                        ? 'Airport gauge unreliable — may be undercounted'
-                        : w.rain_24h_in != null && w.rain_24h_in > 1.0
-                        ? 'Heavy — runoff risk'
-                        : w.rain_24h_in != null && w.rain_24h_in > 0.25
-                        ? 'Moderate rain'
-                        : 'Light or dry'
-                    }
-                    detail={
-                      w.radar_rain_24h_in != null
-                        ? `KEWN airport gauge · radar at home ${w.radar_rain_24h_in.toFixed(2)}"`
-                        : 'KEWN airport gauge'
-                    }
-                    note={w.rain_gauge_issue ?? undefined}
-                  />
-                  <SignalCard
-                    title="Rain, last 72 hours"
-                    icon={CloudRain}
-                    status={w.rain_gauge_issue ? 'unknown' : rain72Status(w.rain_72h_in)}
-                    statusLabel={w.rain_gauge_issue ? 'Gauge issue' : undefined}
-                    value={w.rain_72h_in != null ? `${w.rain_72h_in.toFixed(2)}"` : 'No data'}
-                    caption={
-                      w.rain_gauge_issue
-                        ? 'Airport gauge unreliable — may be undercounted'
-                        : w.rain_72h_in != null && w.rain_72h_in > 2.0
-                        ? 'Peak contamination window'
-                        : w.rain_72h_in != null && w.rain_72h_in > 1.0
-                        ? 'Elevated 72-hour total'
-                        : 'Dry spell — low runoff'
-                    }
-                    detail={[
-                      w.rain_7d_in != null && `7 days ${w.rain_7d_in.toFixed(2)}"`,
-                      w.radar_rain_72h_in != null &&
-                        `radar at home ${w.radar_rain_72h_in.toFixed(2)}" (7 days ${w.radar_rain_7d_in?.toFixed(2) ?? '—'}")`,
-                    ].filter(Boolean).join(' · ') || undefined}
-                    note="Bacteria peak 48–72 hours after rain in eastern NC"
-                  />
-                  <SignalCard
-                    title="Rain forecast, 72 hours"
+                    title="Forecast, 72 h"
                     icon={CalendarClock}
                     status={forecastStatus(w)}
                     statusLabel={
@@ -511,41 +518,8 @@ export default function App() {
                 </div>
               </Section>
 
-              <Section icon={Activity} title="The river" subtitle="Upstream flow carries runoff down to River Bend">
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                  <SignalCard
-                    title="Upstream flow"
-                    icon={Activity}
-                    status={
-                      upstream.discharge_cfs == null
-                        ? 'unknown'
-                        : upstream.discharge_p80 != null && upstream.discharge_cfs > upstream.discharge_p80
-                        ? 'warn'
-                        : 'ok'
-                    }
-                    statusLabel={
-                      upstream.discharge_cfs != null && upstream.discharge_p80 != null
-                        ? upstream.discharge_cfs > upstream.discharge_p80
-                          ? 'High'
-                          : 'Normal'
-                        : undefined
-                    }
-                    value={upstream.discharge_cfs != null ? `${upstream.discharge_cfs.toFixed(0)} ft³/s` : 'No data'}
-                    caption="Trent River near Trenton, ~17 mi upstream"
-                  >
-                    {upstream.discharge_cfs != null && upstream.discharge_p80 != null && (
-                      <Meter
-                        value={upstream.discharge_cfs}
-                        max={upstream.discharge_p80 * 2}
-                        threshold={upstream.discharge_p80}
-                        thresholdLabel={`High: ${upstream.discharge_p80.toFixed(0)} ft³/s`}
-                        fillClass={upstream.discharge_cfs > upstream.discharge_p80 ? 'bg-status-warning' : 'bg-accent'}
-                        label="Upstream flow against the high-flow line for today's date"
-                      />
-                    )}
-                  </SignalCard>
-                  <GaugeSection upstream={upstream} local={data.gauges.local} />
-                </div>
+              <Section icon={Waves} title="The river" subtitle="How high the Trent is running, and what's coming down from upstream">
+                <WaterLevels gauges={data.water_levels} upstream={upstream} />
               </Section>
 
               <div className="grid items-start gap-4 lg:grid-cols-2">

@@ -76,6 +76,28 @@ export interface BacteriaRisk {
   validation: { loyo_auc: number; loyo_brier: number; base_rate_brier: number; formula_auc: number }
 }
 
+export type FloodCategory = 'normal' | 'action' | 'minor' | 'moderate' | 'major'
+
+// One NWS river gauge from backend services/water_levels.py
+export interface WaterLevelGauge {
+  id: string
+  name: string
+  short: string
+  position: 'your stretch' | 'upstream' | 'downstream'
+  distance_mi: number
+  // MLLW (FIMAN gauges) or the station's own gage datum (USGS); never compare across gauges
+  datum: string
+  operator: string | null
+  latest_ft: number
+  latest_time: string
+  change_24h_ft: number | null
+  category: FloodCategory
+  flood_stages: Record<'action' | 'minor' | 'moderate' | 'major', number | null>
+  // [iso time, ft], hourly means, last 7 days
+  series: [string, number][]
+  url: string
+}
+
 export interface Gauge {
   site_code: string
   site_name: string
@@ -138,6 +160,7 @@ export interface Conditions {
     upstream: Gauge
     local: Gauge
   }
+  water_levels: WaterLevelGauge[]
   last_updated: string
   cache_age_seconds: number
 }
