@@ -1,5 +1,6 @@
-import { Activity, ArrowDownRight, ArrowRight, ArrowUpRight, ExternalLink, Waves } from 'lucide-react'
-import type { FloodCategory, Gauge, WaterLevelGauge } from '../types'
+import { format, parseISO } from 'date-fns'
+import { Activity, ArrowDownRight, ArrowRight, ArrowUpRight, ExternalLink, Info, Waves } from 'lucide-react'
+import type { FloodCategory, Gauge, WaterLevelContext, WaterLevelGauge } from '../types'
 import type { StatusLevel } from '../status'
 import { LineChart, type Reference } from './LineChart'
 import { Meter } from './Meter'
@@ -85,8 +86,78 @@ function GaugePanel({ gauge }: { gauge: WaterLevelGauge }) {
   )
 }
 
+/**
+ * Why the water is up, in the National Weather Service's own words: its
+ * water-related alerts for River Bend and the water passages of its latest
+ * forecast discussion. Quoted, never paraphrased; if NWS hasn't explained
+ * the rise, it says so rather than guessing.
+ */
+function WhyPanel({ context }: { context: WaterLevelContext }) {
+  const { alerts, discussion } = context
+  return (
+    <div className="mt-5 rounded-xl bg-accent/[0.06] p-4 ring-1 ring-inset ring-accent/15 sm:p-5">
+      <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+        <Info className="h-4 w-4 text-accent" aria-hidden />
+        Why the water is up
+      </div>
+
+      {alerts.map((a) => (
+        <div key={a.event} className="mt-3">
+          <div className="text-sm font-medium text-ink">
+            {a.event}
+            {a.ends && <span className="font-normal text-ink-2"> · until {format(parseISO(a.ends), 'EEE h:mm a')}</span>}
+          </div>
+          {(a.details.what || a.details.where) && (
+            <p className="mt-0.5 text-sm text-ink-2">{[a.details.what, a.details.where].filter(Boolean).join(' ')}</p>
+          )}
+          {a.details.additional_details && <p className="mt-1 text-sm text-ink-2">{a.details.additional_details}</p>}
+          {a.sender && <p className="mt-1 text-xs text-muted">{a.sender}</p>}
+        </div>
+      ))}
+
+      {discussion && (
+        <figure className="mt-4">
+          <blockquote className="space-y-2 border-l-2 border-accent/40 pl-3 text-sm leading-relaxed text-ink-2">
+            {discussion.excerpts.map((e) => (
+              <p key={e}>“{e}”</p>
+            ))}
+          </blockquote>
+          <figcaption className="mt-2 text-xs text-muted">
+            {discussion.office} forecast discussion, {format(parseISO(discussion.issued), 'EEE h:mm a')} ·{' '}
+            <a href={discussion.url} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
+              Read the full discussion
+            </a>
+          </figcaption>
+        </figure>
+      )}
+
+      {alerts.length === 0 && !discussion && (
+        <p className="mt-2 text-sm text-ink-2">
+          The National Weather Service hasn't issued an explanation for this rise.{' '}
+          <a
+            href="https://forecast.weather.gov/product.php?site=MHX&issuedby=MHX&product=AFD"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-accent hover:underline"
+          >
+            Latest forecast discussion
+          </a>
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** The three nearest Trent River gauges as small multiples, plus upstream flow. */
-export function WaterLevels({ gauges, upstream }: { gauges: WaterLevelGauge[]; upstream: Gauge }) {
+export function WaterLevels({
+  gauges,
+  upstream,
+  context,
+}: {
+  gauges: WaterLevelGauge[]
+  upstream: Gauge
+  context: WaterLevelContext
+}) {
   const flowHigh = upstream.discharge_cfs != null && upstream.discharge_p80 != null && upstream.discharge_cfs > upstream.discharge_p80
 
   return (
@@ -104,6 +175,8 @@ export function WaterLevels({ gauges, upstream }: { gauges: WaterLevelGauge[]; u
           </p>
         </div>
       </div>
+
+      {context.elevated && <WhyPanel context={context} />}
 
       {gauges.length === 0 ? (
         <p className="mt-5 rounded-xl bg-surface-2/50 px-4 py-8 text-center text-sm text-ink-2">

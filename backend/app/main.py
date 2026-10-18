@@ -21,7 +21,8 @@ from .services.ncdeq_rwq import fetch_ncdeq_rwq
 from .services.radar_rain import fetch_radar_rain
 from .services.soundrivers import fetch_soundrivers_page
 from .services.usgs import fetch_usgs_data
-from .services.water_levels import fetch_water_levels
+from .services.nws_discussion import fetch_forecast_discussion
+from .services.water_levels import fetch_water_levels, level_context
 from .services.weather import fetch_weather_data
 
 logging.basicConfig(level=logging.INFO)
@@ -83,7 +84,8 @@ def _freshest(readings: list[dict], field: str, max_age_days: int):
 
 
 async def _build_conditions() -> dict:
-    usgs_res, weather_res, radar_res, sr_res, deq_res, incidents, spills, levels = await asyncio.gather(
+    (usgs_res, weather_res, radar_res, sr_res, deq_res, incidents, spills, levels,
+     discussion) = await asyncio.gather(
         fetch_usgs_data(),
         fetch_weather_data(),
         fetch_radar_rain(),
@@ -92,6 +94,7 @@ async def _build_conditions() -> dict:
         fetch_water_incidents(),
         fetch_sewer_spills(),
         fetch_water_levels(),
+        fetch_forecast_discussion(),
         return_exceptions=True,
     )
     usgs_res = _or_default(usgs_res, "USGS", {})
@@ -102,6 +105,7 @@ async def _build_conditions() -> dict:
     incidents = _or_default(incidents, "NC DEQ fish kills", None)
     spills = _or_default(spills, "NC DEQ sewer spills", None)
     levels = _or_default(levels, "NWPS water levels", [])
+    discussion = _or_default(discussion, "NWS forecast discussion", None)
 
     # Sound Rivers samples River Bend itself, weekly, Memorial Day–Labor Day.
     # NC DEQ samples Union Point at the mouth of the Trent year-round. The
@@ -218,6 +222,7 @@ async def _build_conditions() -> dict:
         },
         "vibrio": vibrio_risk(water_temp_f, salinity_ppt),
         "water_levels": levels,
+        "water_level_context": level_context(levels, alerts, discussion),
         "gauges": {
             "upstream": {
                 "site_code": "02092500",

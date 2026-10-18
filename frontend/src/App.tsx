@@ -519,7 +519,7 @@ export default function App() {
               </Section>
 
               <Section icon={Waves} title="The river" subtitle="How high the Trent is running, and what's coming down from upstream">
-                <WaterLevels gauges={data.water_levels} upstream={upstream} />
+                <WaterLevels gauges={data.water_levels} upstream={upstream} context={data.water_level_context} />
               </Section>
 
               <div className="grid items-start gap-4 lg:grid-cols-2">

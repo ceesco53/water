@@ -128,9 +128,26 @@ async def fetch_nws_alerts() -> list[dict] | None:
             "severity": props.get("severity"),
             "headline": props.get("headline"),
             "ends": props.get("ends") or props.get("expires"),
+            "sender": props.get("senderName"),
+            "details": _alert_details(props.get("description") or ""),
         })
     alerts.sort(key=lambda a: _SEVERITY_RANK.get(a["severity"], 0), reverse=True)
     return alerts
+
+
+_ALERT_BULLET = re.compile(r"^\* ([A-Z][A-Z ]+?)\.\.\.(.*?)(?=^\* [A-Z]|\Z)", re.S | re.M)
+
+
+def _alert_details(description: str) -> dict[str, str]:
+    """
+    NWS alert text in its standard bullets -- "* WHAT...", "* WHERE...",
+    "* WHEN...", "* IMPACTS...", "* ADDITIONAL DETAILS..." -- as
+    {"what": ..., "where": ..., ...}, whitespace collapsed, wording untouched.
+    """
+    return {
+        m.group(1).strip().lower().replace(" ", "_"): " ".join(m.group(2).split())
+        for m in _ALERT_BULLET.finditer(description)
+    }
 
 
 _ISO_DURATION = re.compile(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?")

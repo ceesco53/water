@@ -31,6 +31,18 @@ export interface NwsAlert {
   severity: 'Extreme' | 'Severe' | 'Moderate' | 'Minor' | 'Unknown' | null
   headline: string | null
   ends: string | null
+  sender: string | null
+  // The alert's own bullets, keyed what / where / when / impacts / additional_details
+  details: Record<string, string>
+}
+
+// Official explanations for high or rising water (backend water_levels.level_context)
+export interface WaterLevelContext {
+  // Any gauge at action stage or above, or up 0.25 ft+ in 24 h
+  elevated: boolean
+  alerts: NwsAlert[]
+  // Verbatim water passages of the latest NWS forecast discussion
+  discussion: { office: string; issued: string; excerpts: string[]; url: string } | null
 }
 
 export interface WaterIncident {
@@ -161,6 +173,7 @@ export interface Conditions {
     local: Gauge
   }
   water_levels: WaterLevelGauge[]
+  water_level_context: WaterLevelContext
   last_updated: string
   cache_age_seconds: number
 }

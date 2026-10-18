@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -119,3 +120,26 @@ async def fetch_water_levels() -> list[dict]:
         elif result is not None:
             levels.append(result)
     return sorted(levels, key=lambda g: g["distance_mi"])
+
+
+# A gauge counts as "up" when it's at action stage or higher, or has risen
+# this much in 24 hours.
+RISE_FT = 0.25
+# NWS alerts that speak to water levels, in their own words
+_WATER_ALERT = re.compile(r"(?i)flood|surge|tropical|hurricane|hydrologic|tsunami")
+
+
+def level_context(levels: list[dict], alerts: list[dict] | None, discussion: dict | None) -> dict:
+    """
+    Official explanations for high or rising water: water-related NWS alerts
+    covering HOME, and the water passages of the latest NWS forecast
+    discussion -- quoted, never paraphrased. `elevated` says whether any gauge
+    is up enough to show them.
+    """
+    return {
+        "elevated": any(
+            g["category"] != "normal" or (g.get("change_24h_ft") or 0) >= RISE_FT for g in levels
+        ),
+        "alerts": [a for a in alerts or [] if _WATER_ALERT.search(a.get("event") or "")],
+        "discussion": discussion,
+    }
