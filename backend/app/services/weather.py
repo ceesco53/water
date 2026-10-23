@@ -109,7 +109,9 @@ async def fetch_nws_alerts() -> list[dict] | None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{NOAA_BASE}/alerts/active",
-                params={"point": f"{HOME_LAT},{HOME_LON}"},
+                # Real alerts only: NWS also sends tests and exercises, like the
+                # TEST Tsunami Warning of Oct 20, 2026 that briefly scored as real
+                params={"point": f"{HOME_LAT},{HOME_LON}", "status": "actual"},
                 headers=NOAA_HEADERS,
             )
             resp.raise_for_status()
@@ -121,7 +123,7 @@ async def fetch_nws_alerts() -> list[dict] | None:
     alerts = []
     for feature in data.get("features", []):
         props = feature.get("properties", {})
-        if not props.get("event"):
+        if not props.get("event") or props.get("status") != "Actual":
             continue
         alerts.append({
             "event": props["event"],
