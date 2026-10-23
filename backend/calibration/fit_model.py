@@ -85,6 +85,15 @@ FEATURE_SETS = {
 }
 
 
+def _sig(x: float) -> float:
+    """
+    12 significant digits for the exported model. Different machines' math
+    libraries differ in the last digit or two, so without this an unchanged
+    refit (the yearly CI run) would still produce a "changed" model file.
+    """
+    return float(f"{x:.12g}")
+
+
 def design(df: pd.DataFrame, cols: list[str]) -> np.ndarray:
     rows = []
     for r in df.itertuples(index=False):
@@ -144,8 +153,8 @@ class Logistic:
 
     def export(self) -> dict:
         return {
-            "intercept": float(self.clf.intercept_[0]),
-            "coef": [float(c) for c in self.clf.coef_[0]],
+            "intercept": _sig(self.clf.intercept_[0]),
+            "coef": [_sig(c) for c in self.clf.coef_[0]],
         }
 
 
@@ -187,9 +196,9 @@ class Tobit:
 
     def export(self) -> dict:
         return {
-            "intercept": float(self.beta[0]),
-            "coef": [float(c) for c in self.beta[1:]],
-            "sigma": float(self.sigma),
+            "intercept": _sig(self.beta[0]),
+            "coef": [_sig(c) for c in self.beta[1:]],
+            "sigma": _sig(self.sigma),
         }
 
 
@@ -445,8 +454,8 @@ def main() -> None:
         "label": best_label,
         "target": f"P(enterococcus >= {EXCEEDANCE_MPN} MPN/100mL), predicted as site {LIVE_SITE}",
         "features": [{"name": c, "transform": FEATURES[c]} for c in best_cols],
-        "scaler_mean": [float(v) for v in final.scaler.mean_],
-        "scaler_scale": [float(v) for v in final.scaler.scale_],
+        "scaler_mean": [_sig(v) for v in final.scaler.mean_],
+        "scaler_scale": [_sig(v) for v in final.scaler.scale_],
         **exported,
         "exceedance_mpn": EXCEEDANCE_MPN,
         "policy": {
