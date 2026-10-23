@@ -3,9 +3,18 @@ The dashboard's rain and flow rules as they stood before the bacteria-risk
 model replaced them (retired 2026-10-07), frozen here so the baseline and
 every future model keep being graded against the same yardstick.
 """
-from app.scoring import rating_for
-
 NO_BACTERIA_DATA_IMPACT = -5
+
+
+def rating_for(score: int) -> tuple[str, str]:
+    """The retired 0-100 score's rating bands."""
+    if score >= 85:
+        return "Excellent", "green"
+    if score >= 70:
+        return "Good", "blue"
+    if score >= 50:
+        return "Caution", "yellow"
+    return "Avoid Swimming", "red"
 
 
 def legacy_penalty(rain_24h, rain_72h, flow_cfs, flow_p80) -> int:

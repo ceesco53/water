@@ -20,6 +20,15 @@ sample was drawn:
   d1_3, d4_7           and the 4 before those (d4_7), from KEWN and from radar
                        at the site (IEM; 2014 on) -- see compare_rain.py
 
+Candidate predictors, tested in test_predictors.py:
+  wind_ne_24h/72h      mean KEWN wind speed (kt) along the northeast direction
+                       that pushes Sound water up the Trent; wind_speed_24h
+  level_plln_24h,      Trent River at Pollocksville gauge height over the prior
+  level_plln_change_3d 24h, and its change from 3 days earlier (USGS, 2007 on)
+  dry_days_before      dry days (<0.1") before the 72h rain window, capped at 30
+  tide_ft,             NOAA's predicted tide at Oriental at sample time, and
+  tide_range_day       that day's range (spring vs neap tides)
+
 Labels: mpn, and exceeds = mpn >= 104 (NC's single-sample standard). The
 sample's own salinity/temperature are kept as obs_* for analysis only --
 using them as predictors would leak the answer.
@@ -71,6 +80,15 @@ KEWN_GHCN_ID = "USW00093719"  # New Bern Coastal Carolina Regional Airport
 USGS_DAILY = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/daily/items"
 IEMRE_MULTIDAY = "https://mesonet.agron.iastate.edu/iemre/multiday/{start}/{end}/{lat:.4f}/{lon:.4f}/json"
 RADAR_FIRST_YEAR = 2014  # MRMS daily totals in IEMRE start here
+
+USGS_CONTINUOUS = "https://api.waterdata.usgs.gov/ogcapi/v0/collections/continuous/items"
+POLLOCKSVILLE = "02092554"   # Trent River gauge height, 15-min, 2007 on
+LEVEL_FIRST_YEAR = 2007
+COOPS = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
+TIDE_STATION = "8655133"     # Oriental, Neuse River: nearest NOAA tide prediction station
+# Wind from this compass direction pushes Pamlico Sound water up the Neuse
+# and into the Trent; the wind_ne_* features measure speed along it.
+SETUP_WIND_FROM_DEG = 45
 
 # DEQ station coordinates (stations layer), for radar rain at each site
 SITE_COORDS = {"C100A": (35.1031, -77.0349), "C99": (35.0646, -76.9702)}
@@ -259,6 +277,80 @@ def fetch_site_radar(client: httpx.Client, site: str, first_year: int, last_year
     return out
 
 
+# ── Candidate predictors (tested in test_predictors.py) ──────────────────────
+
+def _cached_year(name: str, year: int, fetch) -> str:
+    """Completed years never change; cache them. The current year is always refetched."""
+    cache = CACHE / f"{name}_{year}.txt"
+    if cache.exists():
+        return cache.read_text()
+    text = fetch()
+    if year < datetime.now(timezone.utc).year:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        cache.write_text(text)
+    else:
+        time.sleep(1)
+    return text
+
+
+def fetch_kewn_wind(client: httpx.Client, first_year: int, last_year: int) -> list[tuple[datetime, float, float]]:
+    """KEWN routine hourly wind: (time, speed kt, direction it blows FROM, degrees)."""
+    out = []
+    for year in range(first_year, last_year + 1):
+        def fetch():
+            resp = client.get(IEM_ASOS, params={
+                "station": "EWN", "data": ["sknt", "drct"],
+                "year1": year, "month1": 1, "day1": 1, "year2": year + 1, "month2": 1, "day2": 1,
+                "tz": "Etc/UTC", "format": "onlycomma", "latlon": "no", "missing": "M",
+                "direct": "no", "report_type": 3,
+            })
+            resp.raise_for_status()
+            return resp.text
+        for row in csv.DictReader(io.StringIO(_cached_year("kewn_wind", year, fetch))):
+            speed, direction = _num(row.get("sknt")), _num(row.get("drct"))
+            if not math.isnan(speed) and not math.isnan(direction):
+                ts = datetime.strptime(row["valid"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                out.append((ts, speed, direction))
+    return sorted(out)
+
+
+def fetch_pollocksville_hourly(client: httpx.Client, first_year: int, last_year: int) -> dict[datetime, float]:
+    """Trent River at Pollocksville gauge height, hourly means (ft)."""
+    hourly: dict[datetime, list[float]] = {}
+    for year in range(max(first_year, LEVEL_FIRST_YEAR), last_year + 1):
+        def fetch():
+            resp = client.get(USGS_CONTINUOUS, params={
+                "f": "json", "monitoring_location_id": f"USGS-{POLLOCKSVILLE}", "parameter_code": "00065",
+                "datetime": f"{year}-01-01T00:00:00Z/{year}-12-31T23:59:59Z",
+                "limit": 50000, "properties": "time,value",
+            })
+            resp.raise_for_status()
+            return resp.text
+        for f in json.loads(_cached_year("plln_stage", year, fetch)).get("features", []):
+            v = _num(f["properties"].get("value"))
+            if not math.isnan(v):
+                t = datetime.fromisoformat(f["properties"]["time"]).replace(minute=0, second=0, microsecond=0)
+                hourly.setdefault(t, []).append(v)
+    return {t: sum(vs) / len(vs) for t, vs in hourly.items()}
+
+
+def fetch_tide_predictions(client: httpx.Client, first_year: int, last_year: int) -> dict[datetime, float]:
+    """NOAA's predicted astronomical tide at Oriental, hourly (ft above MLLW)."""
+    out: dict[datetime, float] = {}
+    for year in range(first_year, last_year + 1):
+        def fetch():
+            resp = client.get(COOPS, params={
+                "station": TIDE_STATION, "product": "predictions", "datum": "MLLW", "interval": "h",
+                "units": "english", "time_zone": "gmt", "format": "json",
+                "begin_date": f"{year}0101", "end_date": f"{year}1231",
+            })
+            resp.raise_for_status()
+            return resp.text
+        for p in json.loads(_cached_year("tide_oriental", year, fetch)).get("predictions", []):
+            out[datetime.strptime(p["t"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)] = float(p["v"])
+    return out
+
+
 # ── Assembly ─────────────────────────────────────────────────────────────────
 
 def build() -> pd.DataFrame:
@@ -282,6 +374,12 @@ def build() -> pd.DataFrame:
 
         print("Fetching radar rain at each site (IEM)…")
         radar = {site: fetch_site_radar(client, site, first.year, last.year) for site in SITE_COORDS}
+
+        print("Fetching candidate predictors: KEWN wind (IEM), Pollocksville stage (USGS), tides (NOAA)…")
+        wind = fetch_kewn_wind(client, first.year, last.year)
+        stage = fetch_pollocksville_hourly(client, first.year, last.year)
+        tide = fetch_tide_predictions(client, first.year, last.year)
+        print(f"  {len(wind)} wind obs, {len(stage)} stage hours, {len(tide)} tide hours")
 
     # Yearly QA: hourly-METAR totals vs NOAA's daily record for the station
     hourly_by_year: dict[int, float] = {}
@@ -316,6 +414,7 @@ def build() -> pd.DataFrame:
         return "ok" if abs(hourly - daily) <= max(0.15, 0.2 * max(hourly, daily)) else "mismatch"
 
     cum = [0.0, *accumulate(inches)]
+    wind_times = [t for t, _, _ in wind]
 
     def window(end_utc: datetime, hours: int) -> tuple[float, int]:
         lo = bisect.bisect_right(times, end_utc - timedelta(hours=hours))
@@ -357,6 +456,39 @@ def build() -> pd.DataFrame:
                 vals = [site_radar.get(d, {}).get(product) for d in days]
                 ok = all(v is not None and not math.isnan(v) for v in vals)
                 row[f"{product}_{name}"] = round(sum(vals), 2) if ok else math.nan
+
+        # Candidate predictors -- all knowable before the sample is drawn
+        for hours in (24, 72):
+            recent = [(sp, dr) for t, sp, dr in wind[bisect.bisect_right(wind_times, end_utc - timedelta(hours=hours)):
+                                                     bisect.bisect_right(wind_times, end_utc)]]
+            row[f"wind_ne_{hours}h"] = (
+                round(sum(sp * math.cos(math.radians(dr - SETUP_WIND_FROM_DEG)) for sp, dr in recent) / len(recent), 2)
+                if len(recent) >= hours * 0.75 else math.nan
+            )
+        recent = [sp for t, sp, dr in wind[bisect.bisect_right(wind_times, end_utc - timedelta(hours=24)):
+                                           bisect.bisect_right(wind_times, end_utc)]]
+        row["wind_speed_24h"] = round(sum(recent) / len(recent), 2) if len(recent) >= 18 else math.nan
+
+        hour = end_utc.replace(minute=0, second=0, microsecond=0)
+        day_levels = [stage[hour - timedelta(hours=k)] for k in range(1, 25) if hour - timedelta(hours=k) in stage]
+        earlier = [stage[hour - timedelta(hours=k)] for k in range(72, 97) if hour - timedelta(hours=k) in stage]
+        row["level_plln_24h"] = round(sum(day_levels) / len(day_levels), 2) if len(day_levels) >= 18 else math.nan
+        row["level_plln_change_3d"] = (
+            round(row["level_plln_24h"] - sum(earlier) / len(earlier), 2)
+            if len(earlier) >= 18 and not math.isnan(row["level_plln_24h"]) else math.nan
+        )
+
+        # Dry spell before the 72h window: consecutive days under 0.1" (cap 30)
+        dry = 0
+        while dry < 30 and hourly_by_lst_day.get(local_day - timedelta(days=4 + dry), 0.0) < 0.1:
+            dry += 1
+        row["dry_days_before"] = dry
+
+        day_start = datetime.combine(local_day, datetime.min.time(), LOCAL).astimezone(timezone.utc)
+        day_hours = [day_start + timedelta(hours=h) for h in range(24)]
+        day_tides = [tide[t] for t in day_hours if t in tide]
+        row["tide_ft"] = tide.get(hour, math.nan)
+        row["tide_range_day"] = round(max(day_tides) - min(day_tides), 3) if len(day_tides) >= 20 else math.nan
 
         flow = flows.get(local_day - timedelta(days=1), math.nan)
         p80 = discharge_p80(local_day)
