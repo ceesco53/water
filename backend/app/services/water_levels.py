@@ -143,3 +143,58 @@ def level_context(levels: list[dict], alerts: list[dict] | None, discussion: dic
         "alerts": [a for a in alerts or [] if _WATER_ALERT.search(a.get("event") or "")],
         "discussion": discussion,
     }
+
+
+# Hours of overlap needed to measure a station's offset from its gauge
+_MIN_OVERLAP_HOURS = 6
+_TROPICAL = re.compile(r"(?i)tropical|hurricane")
+
+
+def attach_guidance(levels: list[dict], guidance: dict[str, dict], alerts: list[dict] | None) -> bool:
+    """
+    Add P-ETSS guidance to each gauge it covers, as `guidance`. Returns False
+    -- attaching nothing -- while a tropical storm or hurricane alert is
+    active, since NWS says the guidance doesn't apply then.
+
+    P-ETSS's stations don't always share the gauge's datum (New Bern's runs
+    ~0.28 ft below FIMAN's MLLW), so each forecast is shifted by the median
+    gap between P-ETSS's own observed values and the gauge's readings over
+    the hours they overlap. Without enough overlap to measure that gap, the
+    gauge gets no guidance rather than a possibly misaligned one.
+    """
+    if any(_TROPICAL.search(a.get("event") or "") for a in alerts or []):
+        for g in levels:
+            g["guidance"] = None
+        return False
+
+    for g in levels:
+        g["guidance"] = None
+        gd = guidance.get(g["id"])
+        if not gd:
+            continue
+        gauge_hourly = {datetime.fromisoformat(t): v for t, v in g["series"]}
+        model_hourly = dict(_hourly(gd["obs"]))
+        gaps = sorted(gauge_hourly[t] - v for t, v in model_hourly.items() if t in gauge_hourly)
+        if len(gaps) < _MIN_OVERLAP_HOURS:
+            continue
+        offset = gaps[len(gaps) // 2]
+        # From the start of the model run, not from now: where the guidance
+        # overlaps the gauge's own readings, it shows how well it's tracking.
+        points = [
+            [t.isoformat(), round(v + offset, 2), round(lo + offset, 2), round(hi + offset, 2)]
+            for t, v, lo, hi in gd["forecast"]
+        ]
+        latest = datetime.fromisoformat(g["latest_time"])
+        ahead = [p for p in points if datetime.fromisoformat(p[0]) > latest]
+        if not ahead:
+            continue
+        peak = max(ahead, key=lambda p: p[1])
+        g["guidance"] = {
+            "source": "NWS P-ETSS storm-surge model guidance",
+            "run": gd["run"],
+            "points": points,  # [iso time, ft, 80%-range low, 80%-range high]
+            "peak": {"time": peak[0], "ft": peak[1]},
+            "offset_ft": round(offset, 2),
+            "url": gd["url"],
+        }
+    return True

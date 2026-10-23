@@ -2,7 +2,7 @@ import { format, parseISO } from 'date-fns'
 import { Activity, ArrowDownRight, ArrowRight, ArrowUpRight, ExternalLink, Info, Waves } from 'lucide-react'
 import type { FloodCategory, Gauge, WaterLevelContext, WaterLevelGauge } from '../types'
 import type { StatusLevel } from '../status'
-import { LineChart, type Reference } from './LineChart'
+import { LineChart, type GuidancePoint, type Reference } from './LineChart'
 import { Meter } from './Meter'
 import { StatusPill } from './StatusPill'
 
@@ -28,11 +28,12 @@ function Change({ feet }: { feet: number | null }) {
   )
 }
 
-function GaugePanel({ gauge }: { gauge: WaterLevelGauge }) {
+function GaugePanel({ gauge, domain, anyGuidance }: { gauge: WaterLevelGauge; domain: [Date, Date]; anyGuidance: boolean }) {
   const points = gauge.series.map(([t, v]) => ({ t: new Date(t), v }))
+  const guidance: GuidancePoint[] = (gauge.guidance?.points ?? []).map(([t, v, lo, hi]) => ({ t: new Date(t), v, lo, hi }))
   const { action, minor } = gauge.flood_stages
-  const values = points.map((p) => p.v)
-  // Frame the data and the flood line it's measured against, on half-foot steps
+  const values = [...points.map((p) => p.v), ...guidance.flatMap((g) => [g.lo, g.hi])]
+  // Frame the data, the guidance and the flood line, on half-foot steps
   const lo = Math.min(...values)
   const hi = Math.max(...values, minor ?? action ?? -Infinity)
   const pad = Math.max(0.25, (hi - lo) * 0.1)
@@ -60,6 +61,13 @@ function GaugePanel({ gauge }: { gauge: WaterLevelGauge }) {
         <span className="text-[26px] font-semibold leading-none tracking-tight text-ink">{gauge.latest_ft.toFixed(2)} ft</span>
         <Change feet={gauge.change_24h_ft} />
       </div>
+      {gauge.guidance ? (
+        <div className="-mt-1 text-xs text-ink-2">
+          Guidance peak {gauge.guidance.peak.ft.toFixed(1)} ft · {format(parseISO(gauge.guidance.peak.time), 'EEE h a')}
+        </div>
+      ) : (
+        anyGuidance && <div className="-mt-1 text-xs text-muted">No NWS guidance for this gauge</div>
+      )}
 
       <LineChart
         points={points}
@@ -70,6 +78,8 @@ function GaugePanel({ gauge }: { gauge: WaterLevelGauge }) {
         references={references}
         plotHeight={112}
         endLabel={false}
+        guidance={guidance}
+        domain={domain}
       />
 
       <a
@@ -82,6 +92,27 @@ function GaugePanel({ gauge }: { gauge: WaterLevelGauge }) {
         {gauge.operator && ` · ${gauge.operator}`}
         <ExternalLink className="h-3 w-3" aria-hidden />
       </a>
+    </div>
+  )
+}
+
+/** Key for the line styles, shown when any gauge has guidance. */
+function GuidanceLegend() {
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink-2">
+      <span className="inline-flex items-center gap-1.5">
+        <svg width="18" height="6" aria-hidden>
+          <line x1="0" x2="18" y1="3" y2="3" className="stroke-accent" strokeWidth="2" />
+        </svg>
+        Measured
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <svg width="18" height="10" aria-hidden>
+          <rect x="0" y="0" width="18" height="10" rx="2" className="fill-accent/15" />
+          <line x1="0" x2="18" y1="5" y2="5" className="stroke-accent" strokeWidth="2" strokeDasharray="4 3" />
+        </svg>
+        NWS storm-surge model guidance, with its 80% likely range
+      </span>
     </div>
   )
 }
@@ -158,6 +189,13 @@ export function WaterLevels({
   upstream: Gauge
   context: WaterLevelContext
 }) {
+  const hasGuidance = gauges.some((g) => g.guidance)
+  // One time axis for every panel, so the small multiples line up
+  const times = gauges.flatMap((g) => [
+    ...g.series.map(([t]) => new Date(t).getTime()),
+    ...(g.guidance?.points ?? []).map(([t]) => new Date(t).getTime()),
+  ])
+  const domain: [Date, Date] = [new Date(Math.min(...times)), new Date(Math.max(...times))]
   const flowHigh = upstream.discharge_cfs != null && upstream.discharge_p80 != null && upstream.discharge_cfs > upstream.discharge_p80
 
   return (
@@ -172,11 +210,14 @@ export function WaterLevels({
           </div>
           <p className="mt-0.5 text-xs text-ink-2">
             The three Trent River gauges nearest you, with the National Weather Service's action and flood lines
+            {hasGuidance && ', and NWS model guidance for the next few days'}
           </p>
         </div>
       </div>
 
       {context.elevated && <WhyPanel context={context} />}
+
+      {hasGuidance && <GuidanceLegend />}
 
       {gauges.length === 0 ? (
         <p className="mt-5 rounded-xl bg-surface-2/50 px-4 py-8 text-center text-sm text-ink-2">
@@ -185,7 +226,7 @@ export function WaterLevels({
       ) : (
         <div className="mt-5 grid gap-x-8 gap-y-8 md:grid-cols-3">
           {gauges.map((g) => (
-            <GaugePanel key={g.id} gauge={g} />
+            <GaugePanel key={g.id} gauge={g} domain={domain} anyGuidance={hasGuidance} />
           ))}
         </div>
       )}
@@ -222,10 +263,31 @@ export function WaterLevels({
         )}
       </div>
 
-      <p className="mt-4 text-[11px] text-muted">
-        Action stage means the river is high enough that the National Weather Service starts watching for flooding. Each
-        gauge measures from its own reference point, so compare a gauge with its own lines, not with the others.
-      </p>
+      <div className="mt-4 space-y-1.5 text-[11px] text-muted">
+        {hasGuidance && (
+          <p>
+            The dashed line is NWS's{' '}
+            <a
+              href={gauges.find((g) => g.guidance)?.guidance?.url}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-accent hover:underline"
+            >
+              P-ETSS storm-surge model guidance
+            </a>
+            , which NWS labels experimental: computer guidance, not an official forecast. Official word comes from the
+            Newport/Morehead City office's alerts above. It's lined up with each gauge's own readings, and covers about
+            four days, the model's full range.
+          </p>
+        )}
+        {!context.guidance_available && (
+          <p>Storm-surge guidance is hidden during tropical storms and hurricanes; NWS says it doesn't apply then.</p>
+        )}
+        <p>
+          Action stage means the river is high enough that the National Weather Service starts watching for flooding.
+          Each gauge measures from its own reference point, so compare a gauge with its own lines, not with the others.
+        </p>
+      </div>
     </section>
   )
 }

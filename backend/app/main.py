@@ -22,7 +22,8 @@ from .services.radar_rain import fetch_radar_rain
 from .services.soundrivers import fetch_soundrivers_page
 from .services.usgs import fetch_usgs_data
 from .services.nws_discussion import fetch_forecast_discussion
-from .services.water_levels import fetch_water_levels, level_context
+from .services.surge_guidance import fetch_surge_guidance
+from .services.water_levels import GAUGES, attach_guidance, fetch_water_levels, level_context
 from .services.weather import fetch_weather_data
 
 logging.basicConfig(level=logging.INFO)
@@ -85,7 +86,7 @@ def _freshest(readings: list[dict], field: str, max_age_days: int):
 
 async def _build_conditions() -> dict:
     (usgs_res, weather_res, radar_res, sr_res, deq_res, incidents, spills, levels,
-     discussion) = await asyncio.gather(
+     discussion, guidance) = await asyncio.gather(
         fetch_usgs_data(),
         fetch_weather_data(),
         fetch_radar_rain(),
@@ -95,6 +96,7 @@ async def _build_conditions() -> dict:
         fetch_sewer_spills(),
         fetch_water_levels(),
         fetch_forecast_discussion(),
+        fetch_surge_guidance([g["lid"] for g in GAUGES]),
         return_exceptions=True,
     )
     usgs_res = _or_default(usgs_res, "USGS", {})
@@ -106,6 +108,7 @@ async def _build_conditions() -> dict:
     spills = _or_default(spills, "NC DEQ sewer spills", None)
     levels = _or_default(levels, "NWPS water levels", [])
     discussion = _or_default(discussion, "NWS forecast discussion", None)
+    guidance = _or_default(guidance, "P-ETSS surge guidance", {})
 
     # Sound Rivers samples River Bend itself, weekly, Memorial Day–Labor Day.
     # NC DEQ samples Union Point at the mouth of the Trent year-round. The
@@ -141,6 +144,9 @@ async def _build_conditions() -> dict:
     rain_7d = weather_res.get("rain_7d_in")
     rain_gauge_issue = weather_res.get("rain_gauge_issue")
     alerts = weather_res.get("alerts")
+    # Surge guidance onto each gauge it covers; False while a tropical alert
+    # is active, when NWS says P-ETSS doesn't apply
+    guidance_available = attach_guidance(levels, guidance, alerts)
 
     radar_72h = radar_res.get("radar_rain_72h_in")
     radar_7d = radar_res.get("radar_rain_7d_in")
@@ -222,7 +228,10 @@ async def _build_conditions() -> dict:
         },
         "vibrio": vibrio_risk(water_temp_f, salinity_ppt),
         "water_levels": levels,
-        "water_level_context": level_context(levels, alerts, discussion),
+        "water_level_context": {
+            **level_context(levels, alerts, discussion),
+            "guidance_available": guidance_available,
+        },
         "gauges": {
             "upstream": {
                 "site_code": "02092500",

@@ -43,6 +43,8 @@ export interface WaterLevelContext {
   alerts: NwsAlert[]
   // Verbatim water passages of the latest NWS forecast discussion
   discussion: { office: string; issued: string; excerpts: string[]; url: string } | null
+  // False while a tropical alert is active (NWS says P-ETSS doesn't apply then)
+  guidance_available: boolean
 }
 
 export interface WaterIncident {
@@ -108,6 +110,17 @@ export interface WaterLevelGauge {
   // [iso time, ft], hourly means, last 7 days
   series: [string, number][]
   url: string
+  // NWS P-ETSS storm-surge model guidance (experimental, not an official
+  // forecast), aligned to this gauge's datum; null where P-ETSS has no station
+  guidance: {
+    source: string
+    run: string | null
+    // [iso time, ft, 80%-range low, 80%-range high], hourly from the model run
+    points: [string, number, number, number][]
+    peak: { time: string; ft: number }
+    offset_ft: number
+    url: string
+  } | null
 }
 
 export interface Gauge {
