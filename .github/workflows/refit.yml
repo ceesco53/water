@@ -1,0 +1,86 @@
+name: Yearly model refit
+
+# Every Oct 15 -- after Sound Rivers' summer season and DEQ's busiest months --
+# rebuild the training set from public data, rerun every test, refit the
+# bacteria-risk model, and push the results to a review branch with an issue
+# summarizing them. Nothing deploys until someone merges the branch and ships.
+# (An issue rather than a pull request: this repo doesn't let Actions open PRs.)
+on:
+  schedule:
+    - cron: "0 12 15 10 *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  refit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Completed years of raw downloads never change; reuse them between runs
+      - uses: actions/cache@v4
+        with:
+          path: backend/calibration/.cache
+          key: calibration-raw-${{ github.run_id }}
+          restore-keys: calibration-raw-
+
+      - run: pip install -r calibration/requirements.txt
+
+      - name: Rebuild the dataset and rerun every test
+        run: |
+          python -m calibration.build_dataset
+          python -m calibration.baseline
+          python -m calibration.compare_rain
+          python -m calibration.test_predictors
+          python -m calibration.fit_model
+
+      - name: Push a review branch and open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          day=$(date -u +%Y-%m-%d)
+          branch="refit/$day"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add calibration/data calibration/reports app/data/bacteria_risk_model.json
+          if git diff --cached --quiet; then
+            echo "Nothing changed since the last refit."
+            exit 0
+          fi
+          git commit -m "Yearly model refit $day"
+          git push origin "$branch"
+
+          adopted=$(grep -c '\*\*yes\*\*' calibration/reports/predictors.md || true)
+          {
+            echo "The yearly refit ran on $day with every NC DEQ sample through today."
+            echo
+            echo "**Review:** https://github.com/${{ github.repository }}/compare/main...$branch"
+            echo
+            echo "## Model"
+            sed -n '/^## 1\./,/^## 2\./p' calibration/reports/model.md | sed '$d'
+            echo
+            echo "## Warning policy"
+            sed -n '/^## 7\./,$p' calibration/reports/model.md | sed '1d'
+            echo
+            echo "## New predictors"
+            if [ "$adopted" -gt 0 ]; then
+              echo "**$adopted predictor set(s) passed the adoption rule** — see calibration/reports/predictors.md."
+              echo "Adding one to the live model is a code change to app/risk_model.py, not just this refit."
+            else
+              echo "None passed the adoption rule this year; see calibration/reports/predictors.md."
+            fi
+            echo
+            echo "To deploy: merge the branch, then run ./ship.sh."
+          } > /tmp/body.md
+          gh issue create --title "Yearly model refit ready for review ($day)" --body-file /tmp/body.md
