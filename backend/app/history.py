@@ -3,9 +3,11 @@ Running log of what the dashboard saw and predicted, so the bacteria-risk
 model -- trained on Union Point and NW Creek -- can be graded against River
 Bend's own samples as they come in (step 6 of the calibration workflow).
 
-  snapshots  one row per refresh (every CACHE_TTL_SECONDS): score, the
-             model's probability and inputs, both rain sources, river flow,
-             and which bacteria result drove the score
+  snapshots  one row per refresh (every CACHE_TTL_SECONDS): the verdict and
+             its findings, the model's probability and inputs, both rain
+             sources, river flow, and which bacteria result it went by. (Rows
+             before Oct 23, 2026 hold the retired 0-100 score; later rows
+             leave score empty and put the verdict in `rating`.)
   samples    one row per bacteria result, recorded the first time it's seen
              -- so every weekly River Bend pass/fail is kept even after
              Sound Rivers' page moves on to the next week
@@ -18,6 +20,7 @@ import json
 import logging
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -101,8 +104,8 @@ def record(conditions: dict) -> None:
                 "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     conditions["last_updated"],
-                    conditions.get("score"),
-                    conditions.get("rating"),
+                    None,  # the retired 0-100 score
+                    conditions.get("verdict"),
                     risk.get("probability"),
                     risk.get("caution_probability"),
                     int(bool(risk.get("summer_storm"))) if risk else None,
@@ -120,7 +123,7 @@ def record(conditions: dict) -> None:
                     primary.get("site_id"),
                     primary.get("status"),
                     primary.get("age_days"),
-                    json.dumps(conditions.get("score_factors") or []),
+                    json.dumps(conditions.get("findings") or []),
                 ),
             )
             conn.executemany(
@@ -159,3 +162,63 @@ def export(table: str, since: str | None = None) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# A sample counts as exceeding NC's swim standard at this MPN; Sound Rivers
+# results have no number, so their own pass/fail stands in.
+_EXCEEDANCE_MPN = 104
+# Samples are drawn mid-morning: grade the prediction standing at ~10 AM EDT.
+_SAMPLE_HOUR_UTC = 14
+
+
+def track_record(caution_line: float | None) -> dict:
+    """
+    How the bacteria-risk prediction has done since logging began: every
+    Trent-side sample (River Bend's shoreline or the rest of the Trent) next
+    to the chance the dashboard gave that morning. Neuse sites are left out,
+    as they are from the verdict.
+    """
+    snapshots = [s for s in export("snapshots") if s["risk_probability"] is not None]
+    if not snapshots:
+        return {"since": None, "samples": [], "summary": None}
+    since = snapshots[0]["ts"][:10]
+    by_day: dict[str, list[dict]] = {}
+    for snap in snapshots:
+        by_day.setdefault(snap["ts"][:10], []).append(snap)
+
+    rows = []
+    for sample in export("samples", since):
+        day = by_day.get(sample["sample_date"])
+        if not day or sample["reach"] not in ("home", "trent"):
+            continue
+        morning = min(day, key=lambda snap: abs(datetime.fromisoformat(snap["ts"]).hour - _SAMPLE_HOUR_UTC))
+        exceeded = (
+            sample["mpn"] >= _EXCEEDANCE_MPN if sample["mpn"] is not None else sample["status"] == "unsafe"
+        )
+        rows.append({
+            "date": sample["sample_date"],
+            "site": sample["site_name"],
+            "source": sample["source"],
+            "mpn": sample["mpn"],
+            "exceeded": exceeded,
+            "predicted": round(morning["risk_probability"], 4),
+        })
+
+    if not rows:
+        return {"since": since, "samples": [], "summary": None}
+    n = len(rows)
+    exceedances = [r for r in rows if r["exceeded"]]
+    line = caution_line if caution_line is not None else 1.0
+    return {
+        "since": since,
+        "samples": rows,
+        "summary": {
+            "samples": n,
+            "exceedances": len(exceedances),
+            "flagged_exceedances": sum(r["predicted"] >= line for r in exceedances),
+            "mean_predicted": round(sum(r["predicted"] for r in rows) / n, 4),
+            "observed_rate": round(len(exceedances) / n, 4),
+            # Mean squared error of the predicted chances; 0 is perfect
+            "brier": round(sum((r["predicted"] - r["exceeded"]) ** 2 for r in rows) / n, 4),
+        },
+    }

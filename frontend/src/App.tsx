@@ -13,12 +13,12 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { fetchConditions, fetchHistory, forceRefresh } from './api'
-import type { BacteriaReading, BacteriaRisk, Conditions, HistorySnapshot, SewerSpill } from './types'
-import type { StatusLevel } from './status'
+import { fetchConditions, fetchHistory, fetchTrackRecord, forceRefresh } from './api'
+import type { BacteriaReading, BacteriaRisk, Conditions, Finding, HistorySnapshot, SewerSpill, TrackRecord } from './types'
+import { LEVEL, type StatusLevel } from './status'
 import { ago, shortDate } from './format'
 import { Hero } from './components/Hero'
-import { FactorBreakdown } from './components/FactorBreakdown'
+import { Findings } from './components/Findings'
 import { Trends } from './components/Trends'
 import { SignalCard } from './components/SignalCard'
 import { Meter } from './components/Meter'
@@ -30,13 +30,18 @@ import { ReportsSection } from './components/ReportsSection'
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
 const HISTORY_DAYS = 7
 
-// Mirror backend scoring.py: bacteria results count fully for a week, half
-// for the second week, then not at all; reports count for 7d (fish kills,
-// blooms) or 5d (sewage spills that reached water).
+// Mirror backend scoring.py: bacteria results count fully for a week, less
+// for the second week, then not at all.
 const BACTERIA_FULL_WEIGHT_DAYS = 7
 const BACTERIA_HALF_WEIGHT_DAYS = 14
-const INCIDENT_SCORE_DAYS = 7
-const SPILL_SCORE_DAYS = 5
+
+// A card's status comes from the matching finding, so the card and the
+// verdict can never disagree about the same report.
+function findingStatus(finding: Finding | undefined, clearLabel: string): { status: StatusLevel; label: string } {
+  if (!finding) return { status: 'unknown', label: 'No data' }
+  if (finding.level === 'clear') return { status: 'ok', label: clearLabel }
+  return LEVEL[finding.level]
+}
 
 function bacteriaStatus(status: BacteriaReading['status']): StatusLevel {
   if (status === 'safe') return 'ok'
@@ -58,10 +63,10 @@ function bacteriaDetail(r: BacteriaReading): string {
 
 function bacteriaNote(r: BacteriaReading): string {
   if (r.age_days != null && r.age_days > BACTERIA_HALF_WEIGHT_DAYS) {
-    return 'Too old to count in the score — the risk model stands in'
+    return 'Too old to go by — the prediction stands in'
   }
   if (r.age_days == null || r.age_days > BACTERIA_FULL_WEIGHT_DAYS) {
-    return 'Over a week old — counts half in the score'
+    return 'Over a week old, so it counts for less'
   }
   if (r.source === 'NC DEQ') return 'NC standard: one sample ≥104 or 30-day geomean ≥35 MPN/100mL'
   return 'Pass/fail weekly report — no numeric value from this source'
@@ -288,20 +293,20 @@ function RainCard({ weather: w }: { weather: Conditions['weather'] }) {
   )
 }
 
-function IncidentsCard({ reports }: { reports: Conditions['reports'] }) {
+function IncidentsCard({ reports, finding }: { reports: Conditions['reports']; finding?: Finding }) {
   const incidents = reports.incidents
   const scope = `NC DEQ · within ${reports.radius_mi} mi · last ${reports.lookback_days} days`
   if (incidents == null) {
     return <SignalCard title="Fish kills & algal blooms" icon={Fish} status="unknown" value="Unavailable" caption="NC DEQ feed unreachable" />
   }
-  const recentBloom = incidents.some((i) => i.algal_bloom && i.age_days <= INCIDENT_SCORE_DAYS)
   const latest = incidents[0]
+  const state = findingStatus(finding, 'None')
   return (
     <SignalCard
       title="Fish kills & algal blooms"
       icon={Fish}
-      status={recentBloom ? 'danger' : incidents.length > 0 ? 'warn' : 'ok'}
-      statusLabel={recentBloom ? 'Bloom' : incidents.length > 0 ? 'Reported' : 'None'}
+      status={state.status}
+      statusLabel={state.label}
       value={incidents.length > 0 ? `${incidents.length} report${incidents.length === 1 ? '' : 's'}` : 'None'}
       caption={latest ? `Latest: ${latest.type.toLowerCase()} · ${shortDate(latest.date)}` : 'Nothing reported nearby'}
       detail={scope}
@@ -310,7 +315,7 @@ function IncidentsCard({ reports }: { reports: Conditions['reports'] }) {
   )
 }
 
-function SpillsCard({ reports }: { reports: Conditions['reports'] }) {
+function SpillsCard({ reports, finding }: { reports: Conditions['reports']; finding?: Finding }) {
   const spills = reports.sewer_spills
   const scope = `NC DEQ · within ${reports.radius_mi} mi · last ${reports.lookback_days} days`
   if (spills == null) {
@@ -318,7 +323,7 @@ function SpillsCard({ reports }: { reports: Conditions['reports'] }) {
   }
   const gallons = (s: SewerSpill) => s.volume_reached_water_gal ?? s.volume_gal
   const reached = spills.filter((s) => s.reached_water)
-  const scored = reached.some((s) => s.ongoing || s.age_days <= SPILL_SCORE_DAYS)
+  const state = findingStatus(finding, 'None')
   const worst = reached.length > 0
     ? reached.reduce((a, b) => ((gallons(b) ?? 0) > (gallons(a) ?? 0) ? b : a))
     : null
@@ -327,8 +332,8 @@ function SpillsCard({ reports }: { reports: Conditions['reports'] }) {
     <SignalCard
       title="Sewage spills"
       icon={Biohazard}
-      status={scored ? 'danger' : reached.length > 0 ? 'warn' : 'ok'}
-      statusLabel={scored ? 'In the water' : reached.length > 0 ? 'Recent' : 'None'}
+      status={state.status}
+      statusLabel={state.label}
       value={reached.length > 0 ? `${reached.length} reached water` : 'None'}
       caption={
         worst
@@ -346,6 +351,7 @@ function SpillsCard({ reports }: { reports: Conditions['reports'] }) {
 export default function App() {
   const [data, setData] = useState<Conditions | null>(null)
   const [history, setHistory] = useState<HistorySnapshot[]>([])
+  const [track, setTrack] = useState<TrackRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -353,7 +359,9 @@ export default function App() {
 
   const loadHistory = useCallback(async () => {
     try {
-      setHistory(await fetchHistory(HISTORY_DAYS))
+      const [snapshots, record] = await Promise.all([fetchHistory(HISTORY_DAYS), fetchTrackRecord()])
+      setHistory(snapshots)
+      setTrack(record)
     } catch {
       // Trends are a bonus; the dashboard works without them
     }
@@ -412,8 +420,8 @@ export default function App() {
               {data.alerts && <AlertsBanner alerts={data.alerts} />}
 
               <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-                <FactorBreakdown score={data.score} factors={data.score_factors} />
-                <Trends history={history} days={HISTORY_DAYS} />
+                <Findings verdict={data.verdict} findings={data.findings} />
+                <Trends history={history} days={HISTORY_DAYS} track={track} />
               </div>
 
               <Section icon={Microscope} title="Water quality" subtitle="What's in the water off River Bend">
@@ -432,7 +440,7 @@ export default function App() {
                         ? `Salinity at ${data.water.salinity_site.split(',')[0]} · ${shortDate(data.water.salinity_date)}`
                         : undefined
                     }
-                    note="A concern for open wounds, liver disease or weak immunity — not in the score"
+                    note="A concern for open wounds, liver disease or weak immunity — doesn't change the verdict"
                   />
                   <SignalCard
                     title="Water temperature"
@@ -459,8 +467,8 @@ export default function App() {
                         : 'Ocean-inlet proxy ~40 mi SE — the shallow Trent runs warmer in summer, cooler in winter'
                     }
                   />
-                  <IncidentsCard reports={data.reports} />
-                  <SpillsCard reports={data.reports} />
+                  <IncidentsCard reports={data.reports} finding={data.findings.find((f) => f.key === 'incidents')} />
+                  <SpillsCard reports={data.reports} finding={data.findings.find((f) => f.key === 'spills')} />
                 </div>
               </Section>
 

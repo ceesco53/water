@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 STATUS_RANK = {"unsafe": 3, "caution": 2, "safe": 1, "unknown": 0}
@@ -8,34 +9,32 @@ STATUS_RANK = {"unsafe": 3, "caution": 2, "safe": 1, "unknown": 0}
 BACTERIA_FULL_WEIGHT_DAYS = 7
 BACTERIA_HALF_WEIGHT_DAYS = 14
 
-_BACTERIA_IMPACT = {"unsafe": -60, "caution": -30, "safe": 0}
-_BACTERIA_DESC = {
-    "unsafe": "exceeds swimming standard",
+_SAMPLE_STATUSES = {"unsafe", "caution", "safe"}
+_SAMPLE_DESC = {
+    "unsafe": "exceeds the swim standard",
     "caution": "elevated bacteria",
-    "safe": "within swimming standard",
+    "safe": "within the swim standard",
 }
 
-# Reports that count toward the score (the dashboard lists a longer window).
+# Reports that count toward the verdict (the dashboard lists a longer window).
 INCIDENT_SCORE_DAYS = 7
 SPILL_SCORE_DAYS = 5
-
-_ALERT_IMPACT = {"Extreme": -50, "Severe": -30, "Moderate": -10}
-
+SPILL_CAUTION_GAL = 1_000
 
 # How directly a site's water reflects River Bend's: its own shoreline first,
 # then the rest of the Trent. Neuse sites are a different river -- shown on
-# the dashboard, never allowed to drive the score.
+# the dashboard, never allowed to drive the verdict.
 _REACH_RANK = {"home": 0, "trent": 1}
 
 
 def select_bacteria_reading(readings: list[dict]) -> Optional[dict]:
     """
-    Pick the bacteria reading that drives the score. Freshness comes first:
+    Pick the bacteria reading the verdict goes by. Freshness comes first:
     if anything was sampled in the last week, the score uses the most relevant
     reach that has a result that recent (River Bend's own shoreline over the
     rest of the Trent), and the worst result within it. Otherwise the same for
     the second week, newest first; past that, the newest result at all, which
-    compute_score treats as too old to count. Neuse sites never qualify.
+    assess treats as too old to count. Neuse sites never qualify.
 
     Earlier versions ignored where a site was: a fixed source priority once let
     a month-old result override a 6-day-old one, and "worst of the freshest"
@@ -44,7 +43,7 @@ def select_bacteria_reading(readings: list[dict]) -> Optional[dict]:
     """
     eligible = [
         r for r in readings
-        if r.get("status") in _BACTERIA_IMPACT and r.get("reach") in _REACH_RANK
+        if r.get("status") in _SAMPLE_STATUSES and r.get("reach") in _REACH_RANK
     ]
     if not eligible:
         return None
@@ -65,97 +64,71 @@ def select_bacteria_reading(readings: list[dict]) -> Optional[dict]:
     return eligible[0]
 
 
-def _bacteria_factor(reading: Optional[dict]) -> dict:
+# ── The verdict ──────────────────────────────────────────────────────────────
+#
+# No points. Every check produces a finding at one of four levels, and the
+# worst finding sets the verdict:
+#   avoid    stay out of the water
+#   caution  swim with caution
+#   note     worth knowing; the verdict doesn't change
+#   clear    nothing found
+# Findings come in two groups kept apart, so the headline says one thing:
+# "water" (what's in the water) and "hazard" (weather and safety right now).
+# The bacteria risk itself is the dashboard's headline number.
+LEVEL_RANK = {"clear": 0, "note": 1, "caution": 2, "avoid": 3}
+_VERDICT = {"clear": "good", "note": "good", "caution": "caution", "avoid": "avoid"}
+
+# NWS alerts by what they mean for someone in the water (scale agreed Oct
+# 2026): these warnings mean get out; any other relevant warning means
+# caution; watches, advisories and statements are notes; alerts with nothing
+# to do with swimming aren't counted at all.
+_AVOID_ALERTS = {
+    "Tornado Warning", "Severe Thunderstorm Warning", "Flash Flood Warning",
+    "Hurricane Warning", "Tropical Storm Warning", "Storm Surge Warning",
+    "Extreme Wind Warning", "Tsunami Warning", "Special Marine Warning",
+}
+_UNRELATED_ALERTS = re.compile(
+    r"(?i)freeze|frost|fire|red flag|air quality|fog|winter|snow|ice|blizzard|cold|chill|dust|smoke|ashfall"
+)
+
+
+def _finding(key: str, group: str, label: str, level: str, reason: str) -> dict:
+    return {"key": key, "group": group, "label": label, "level": level, "reason": reason}
+
+
+def alert_level(event: str) -> Optional[str]:
+    """What an NWS alert means for swimming; None when it doesn't bear on it."""
+    if event in _AVOID_ALERTS:
+        return "avoid"
+    if _UNRELATED_ALERTS.search(event):
+        return None
+    if "Heat" in event:  # the water's the cool place to be; worth knowing, no more
+        return "note"
+    return "caution" if event.endswith("Warning") else "note"
+
+
+def _sample_finding(reading: Optional[dict]) -> dict:
+    label = "Latest bacteria sample"
     if reading is None:
-        return {"label": "Bacteria", "impact": -5,
-                "reason": "No sampling data available — the risk model stands in"}
-
-    label = f"Bacteria ({reading['source']})"
-    status = reading["status"]
-    age = reading.get("age_days")
-    site = reading["site_name"]
-    desc = _BACTERIA_DESC[status]
-    base = _BACTERIA_IMPACT[status]
-
-    if age is not None and age > BACTERIA_HALF_WEIGHT_DAYS:
-        return {"label": label, "impact": -5,
-                "reason": (f"Newest sample is {age}d old ({site}: {desc}) — "
-                           "too old to count; the risk model stands in")}
-    if age is not None and age <= BACTERIA_FULL_WEIGHT_DAYS:
-        suffix = " — do not swim" if status == "unsafe" else ""
-        return {"label": label, "impact": base,
-                "reason": f"{site}: {desc}, sampled {age}d ago{suffix}"}
-
-    when = f"sampled {age}d ago" if age is not None else "sample date unknown"
-    return {"label": label, "impact": round(base / 2),
-            "reason": f"{site}: {desc}, {when} — counts half"}
-
-
-def _incident_factor(incidents: list[dict]) -> dict:
-    recent = [i for i in incidents if i["age_days"] <= INCIDENT_SCORE_DAYS]
-    blooms = [i for i in recent if i["algal_bloom"]]
-    kills = [i for i in recent if i["fish_kill"]]
-
-    impact = 0
-    reasons = []
-    if blooms:
-        impact -= 15
-        b = blooms[0]
-        reasons.append(f"algal bloom reported {b['date']} ({b['waterbody'] or 'nearby'}) — avoid discolored water or scum")
-    if kills:
-        impact -= 10
-        nearest = min(kills, key=lambda k: k["distance_mi"] if k["distance_mi"] is not None else 99)
-        where = nearest["waterbody"] or "nearby"
-        dist = f", {nearest['distance_mi']} mi" if nearest["distance_mi"] is not None else ""
-        reasons.append(f"{len(kills)} fish kill report{'s' if len(kills) != 1 else ''} in {INCIDENT_SCORE_DAYS}d "
-                       f"(nearest: {where}{dist}) — likely low oxygen")
-    if not reasons:
-        reasons.append(f"None reported nearby in {INCIDENT_SCORE_DAYS}d")
-
-    return {"label": "Fish Kills & Algal Blooms", "impact": impact, "reason": "; ".join(reasons)}
-
-
-def _spill_factor(spills: list[dict]) -> dict:
-    recent = [
-        s for s in spills
-        if s["reached_water"] and (s["age_days"] <= SPILL_SCORE_DAYS or s["ongoing"])
-    ]
-    if not recent:
-        return {"label": "Sewage Spills", "impact": 0,
-                "reason": f"None reaching water nearby in {SPILL_SCORE_DAYS}d"}
-
-    def volume(s: dict) -> float:
-        return s["volume_reached_water_gal"] or s["volume_gal"] or 0
-
-    worst = max(recent, key=volume)
-    gallons = volume(worst)
-    if gallons >= 10_000:
-        impact = -30
-    elif gallons >= 1_000:
-        impact = -15
+        return _finding("sample", "water", label, "note", "No recent sample on the Trent — the prediction stands in")
+    status, age, site = reading["status"], reading.get("age_days"), reading["site_name"].split(",")[0]
+    desc = _SAMPLE_DESC[status]
+    if age is None or age > BACTERIA_HALF_WEIGHT_DAYS:
+        when = f"{age} days old" if age is not None else "undated"
+        return _finding("sample", "water", label, "note",
+                        f"{site}: {desc}, but {when} — too old to go by; the prediction stands in")
+    fresh = age <= BACTERIA_FULL_WEIGHT_DAYS
+    if status == "unsafe":
+        level = "avoid" if fresh else "caution"
+    elif status == "caution":
+        level = "caution" if fresh else "note"
     else:
-        impact = -5
-
-    amount = f"{gallons:,.0f} gal" if gallons else "Unknown volume"
-    where = worst["waterbody"] or "surface water"
-    when = "ongoing" if worst["ongoing"] else f"{worst['age_days']}d ago"
-    dist = f", {worst['distance_mi']} mi away" if worst["distance_mi"] is not None else ""
-    return {"label": "Sewage Spills", "impact": impact,
-            "reason": f"{amount} reached {where} ({when}{dist})"}
+        level = "clear"
+    suffix = "" if fresh or level == "clear" else " — over a week old, so it counts for less"
+    return _finding("sample", "water", label, level, f"{site}: {desc}, sampled {age} days ago{suffix}")
 
 
-# Bacteria-risk warning policy (set in calibration/fit_model.py, stored with
-# the model): at or above the model's Caution probability -- or after a big
-# summer storm, whatever the model says -- this factor alone drops the score
-# into Caution. Below that line the penalty scales with the probability,
-# reaching -25 (Good) just under it. The model replaced separate 24h-rain,
-# 72h-rain and upstream-flow rules, which backtested worse on 1998-2026 DEQ
-# samples (see calibration/reports/).
-_CAUTION_IMPACT = -31  # 100 - 31 = 69, the top of the Caution band
-_BELOW_CAUTION_MAX_IMPACT = -25
-
-
-def _risk_factor(risk: dict) -> dict:
+def _risk_finding(risk: dict) -> dict:
     p, line = risk["probability"], risk["caution_probability"]
     chance = f"{p:.0%}" if p >= 0.01 else "<1%"
     notes = []
@@ -163,85 +136,102 @@ def _risk_factor(risk: dict) -> dict:
         notes.append("rain from radar — airport gauge unreliable")
     if risk["missing_inputs"]:
         notes.append(f"{', '.join(risk['missing_inputs'])} unavailable")
-    unknown = f" ({'; '.join(notes)})" if notes else ""
+    extra = f" ({'; '.join(notes)})" if notes else ""
+    label = "Predicted bacteria risk"
     if p >= line:
-        return {"label": "Bacteria Risk", "impact": _CAUTION_IMPACT,
-                "reason": f"{chance} chance of exceeding the swim standard — over the "
-                          f"{line:.1%} warning line{unknown}"}
+        return _finding("risk", "water", label, "caution",
+                        f"{chance} chance of exceeding the swim standard — over the {line:.1%} Caution line{extra}")
     if risk["summer_storm"]:
-        return {"label": "Bacteria Risk", "impact": _CAUTION_IMPACT,
-                "reason": f"{risk['rain_72h_in']:.1f}\" of rain in 72h — big summer storms always "
-                          f"rate Caution ({chance} modeled){unknown}"}
-    return {"label": "Bacteria Risk", "impact": round(_BELOW_CAUTION_MAX_IMPACT * p / line),
-            "reason": f"{chance} chance of exceeding the swim standard{unknown}"}
+        return _finding("risk", "water", label, "caution",
+                        f"{risk['rain_72h_in']:.1f}\" of rain in 72h — big summer storms always mean caution "
+                        f"({chance} modeled){extra}")
+    return _finding("risk", "water", label, "clear",
+                    f"{chance} chance of exceeding the swim standard — under the {line:.1%} Caution line{extra}")
 
 
-def compute_score(
+def _spill_finding(spills: list[dict]) -> dict:
+    label = "Sewage spills"
+    recent = [s for s in spills if s["reached_water"] and (s["age_days"] <= SPILL_SCORE_DAYS or s["ongoing"])]
+    if not recent:
+        return _finding("spills", "water", label, "clear", f"None reaching the water nearby in {SPILL_SCORE_DAYS} days")
+
+    def volume(s: dict) -> float:
+        return s["volume_reached_water_gal"] or s["volume_gal"] or 0
+
+    worst = max(recent, key=volume)
+    gallons = volume(worst)
+    amount = f"{gallons:,.0f} gal" if gallons else "Unknown volume"
+    where = worst["waterbody"] or "surface water"
+    when = "ongoing" if worst["ongoing"] else f"{worst['age_days']} days ago"
+    dist = f", {worst['distance_mi']} mi away" if worst["distance_mi"] is not None else ""
+    level = "caution" if gallons >= SPILL_CAUTION_GAL else "note"
+    return _finding("spills", "water", label, level, f"{amount} reached {where} ({when}{dist})")
+
+
+def _incident_finding(incidents: list[dict]) -> dict:
+    label = "Fish kills & algal blooms"
+    recent = [i for i in incidents if i["age_days"] <= INCIDENT_SCORE_DAYS]
+    blooms = [i for i in recent if i["algal_bloom"]]
+    kills = [i for i in recent if i["fish_kill"]]
+    if blooms:
+        b = blooms[0]
+        return _finding("incidents", "water", label, "caution",
+                        f"Algal bloom reported {b['date']} ({b['waterbody'] or 'nearby'}) — avoid discolored water or scum")
+    if kills:
+        nearest = min(kills, key=lambda k: k["distance_mi"] if k["distance_mi"] is not None else 99)
+        dist = f", {nearest['distance_mi']} mi" if nearest["distance_mi"] is not None else ""
+        return _finding("incidents", "water", label, "note",
+                        f"{len(kills)} fish kill report{'s' if len(kills) != 1 else ''} in {INCIDENT_SCORE_DAYS} days "
+                        f"(nearest: {nearest['waterbody'] or 'nearby'}{dist}) — usually low oxygen")
+    return _finding("incidents", "water", label, "clear", f"None reported nearby in {INCIDENT_SCORE_DAYS} days")
+
+
+def _alert_findings(alerts: Optional[list[dict]]) -> list[dict]:
+    if alerts is None:
+        return [_finding("alerts", "hazard", "NWS alerts", "note", "Couldn't reach the National Weather Service")]
+    found = []
+    for a in alerts:
+        level = alert_level(a["event"])
+        if level is not None:
+            until = f" until {a['ends'][:16].replace('T', ' ')}" if a.get("ends") else ""
+            found.append(_finding(f"alert:{a['event']}", "hazard", a["event"], level,
+                                  a.get("headline") or f"In effect{until}"))
+    return found or [_finding("alerts", "hazard", "NWS alerts", "clear", "No alerts that bear on swimming")]
+
+
+def _thunder_finding(pct: int) -> dict:
+    label = "Lightning, next 6 hours"
+    if pct >= 55:
+        return _finding("thunder", "hazard", label, "caution", f"{pct}% chance of thunder — get out at the first rumble")
+    if pct >= 25:
+        return _finding("thunder", "hazard", label, "note", f"{pct}% chance of thunder — storms possible")
+    return _finding("thunder", "hazard", label, "clear", f"{pct}% chance of thunder")
+
+
+def assess(
     bacteria: Optional[dict],
     bacteria_risk: Optional[dict],
     nws_alerts: Optional[list[dict]] = None,
     thunder_pct_6h: Optional[int] = None,
     incidents: Optional[list[dict]] = None,
     sewer_spills: Optional[list[dict]] = None,
-) -> tuple[int, str, str, list[dict]]:
-    score = 100
-    factors: list[dict] = []
-
-    def add(factor: dict) -> None:
-        nonlocal score
-        score += factor["impact"]
-        factors.append(factor)
-
-    # Bacteria — highest weight, primary safety signal
-    add(_bacteria_factor(bacteria))
-
-    # Predicted bacteria risk from rain, river flow and season
+) -> dict:
+    """Today's verdict (good / caution / avoid) and every finding behind it, worst first within each group."""
+    findings = [_sample_finding(bacteria)]
     if bacteria_risk is not None:
-        add(_risk_factor(bacteria_risk))
-
-    # Sewage reaching the water — direct bacteria source
+        findings.append(_risk_finding(bacteria_risk))
     if sewer_spills is not None:
-        add(_spill_factor(sewer_spills))
-
-    # Fish kills / algal blooms — low oxygen, possible toxins
+        findings.append(_spill_finding(sewer_spills))
     if incidents is not None:
-        add(_incident_factor(incidents))
-
-    # NWS alerts — storms, floods, heat; only the most severe counts
-    if nws_alerts is not None:
-        if nws_alerts:
-            worst = max(nws_alerts, key=lambda a: -_ALERT_IMPACT.get(a.get("severity"), 0))
-            more = f" (+{len(nws_alerts) - 1} more)" if len(nws_alerts) > 1 else ""
-            add({"label": "NWS Alerts", "impact": _ALERT_IMPACT.get(worst.get("severity"), 0),
-                 "reason": f"{worst['event']} in effect{more}"})
-        else:
-            add({"label": "NWS Alerts", "impact": 0, "reason": "No active alerts"})
-
-    # Lightning — the most immediate swim hazard
+        findings.append(_incident_finding(incidents))
+    findings += _alert_findings(nws_alerts)
     if thunder_pct_6h is not None:
-        if thunder_pct_6h >= 55:
-            add({"label": "Thunder (6h)", "impact": -20,
-                 "reason": f"{thunder_pct_6h}% — storms likely; get out at the first rumble"})
-        elif thunder_pct_6h >= 25:
-            add({"label": "Thunder (6h)", "impact": -10,
-                 "reason": f"{thunder_pct_6h}% — storms possible"})
-        else:
-            add({"label": "Thunder (6h)", "impact": 0,
-                 "reason": f"{thunder_pct_6h}% — low lightning risk"})
+        findings.append(_thunder_finding(thunder_pct_6h))
 
-    score = max(0, min(100, score))
-    rating, color = rating_for(score)
-    return score, rating, color, factors
-
-
-def rating_for(score: int) -> tuple[str, str]:
-    if score >= 85:
-        return "Excellent", "green"
-    if score >= 70:
-        return "Good", "blue"
-    if score >= 50:
-        return "Caution", "yellow"
-    return "Avoid Swimming", "red"
+    worst = max((f["level"] for f in findings), key=LEVEL_RANK.__getitem__, default="clear")
+    verdict = _VERDICT[worst]
+    findings.sort(key=lambda f: (f["group"] != "water", -LEVEL_RANK[f["level"]]))
+    return {"verdict": verdict, "findings": findings}
 
 
 # Vibrio vulnificus multiplies in warm, brackish water: growth is suppressed

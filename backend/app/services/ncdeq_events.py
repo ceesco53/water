@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import timedelta
 
 import httpx
@@ -24,6 +25,12 @@ LOOKBACK_DAYS = 14
 def _text(value) -> str | None:
     s = (value or "").strip() if isinstance(value, str) else None
     return s or None
+
+
+def _waterbody(value) -> str | None:
+    """'Trent River - 27-101-(31)' -> 'Trent River': drop DEQ's stream index code."""
+    name = _text(value)
+    return re.sub(r"\s*-\s*\d[\w\-().]*$", "", name) if name else None
 
 
 def _yes(value) -> bool:
@@ -122,7 +129,7 @@ async def fetch_sewer_spills() -> list[dict] | None:
                 row.get("dwr_volume_waterbody_5d") or row.get("dwr_volume_waterbody")
             ),
             "reached_water": _yes(row.get("dwr_reached_water")) or _yes(row.get("dwr_reached_waterbody_5d")),
-            "waterbody": _text(row.get("dwr_waterbody_5d")) or _text(row.get("dwr_waterbody")),
+            "waterbody": _waterbody(row.get("dwr_waterbody_5d")) or _waterbody(row.get("dwr_waterbody")),
             "ongoing": _yes(row.get("dwr_ongoing")),
             "cause": _text(row.get("dwr_cause_5d")),
             "distance_mi": _distance(row, "deq_latitude", "deq_longitude") or _distance(row),

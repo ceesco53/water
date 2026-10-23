@@ -1,8 +1,13 @@
-export type RatingColor = 'green' | 'blue' | 'yellow' | 'red'
+export type Verdict = 'good' | 'caution' | 'avoid'
+export type FindingLevel = 'clear' | 'note' | 'caution' | 'avoid'
 
-export interface ScoreFactor {
+// One check behind the verdict (backend scoring.assess). "water" is what's in
+// the water; "hazard" is weather and safety right now.
+export interface Finding {
+  key: string
+  group: 'water' | 'hazard'
   label: string
-  impact: number
+  level: FindingLevel
   reason: string
 }
 
@@ -133,10 +138,8 @@ export interface Gauge {
 }
 
 export interface Conditions {
-  score: number
-  rating: string
-  rating_color: RatingColor
-  score_factors: ScoreFactor[]
+  verdict: Verdict
+  findings: Finding[]
   bacteria: {
     primary: BacteriaReading | null
     readings: BacteriaReading[]
@@ -194,10 +197,33 @@ export interface Conditions {
 // One logged refresh from /api/history/snapshots (backend app/history.py)
 export interface HistorySnapshot {
   ts: string
+  // The retired 0-100 score (rows before Oct 23, 2026); null since
   score: number | null
+  // Rating then, verdict since
   rating: string | null
   risk_probability: number | null
   risk_caution_line: number | null
   kewn_rain_72h: number | null
   radar_rain_72h: number | null
+}
+
+// Logged predictions next to the Trent-side samples that followed (/api/track-record)
+export interface TrackRecord {
+  since: string | null
+  samples: {
+    date: string
+    site: string
+    source: string
+    mpn: number | null
+    exceeded: boolean
+    predicted: number
+  }[]
+  summary: {
+    samples: number
+    exceedances: number
+    flagged_exceedances: number
+    mean_predicted: number
+    observed_rate: number
+    brier: number
+  } | null
 }

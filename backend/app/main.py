@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from . import history, risk_model
 from .scoring import (
     BACTERIA_FULL_WEIGHT_DAYS,
-    compute_score,
+    assess,
     select_bacteria_reading,
     vibrio_risk,
 )
@@ -175,7 +175,7 @@ async def _build_conditions() -> dict:
         logger.error("Bacteria risk model failed: %s", e)
         bacteria_risk = None
 
-    score, rating, color, factors = compute_score(
+    verdict = assess(
         bacteria=primary,
         bacteria_risk=bacteria_risk,
         nws_alerts=alerts,
@@ -185,10 +185,8 @@ async def _build_conditions() -> dict:
     )
 
     return {
-        "score": score,
-        "rating": rating,
-        "rating_color": color,
-        "score_factors": factors,
+        # good / caution / avoid, and every finding behind it
+        **verdict,
         "bacteria": {
             "primary": primary,
             "readings": readings,
@@ -272,6 +270,13 @@ async def force_refresh():
     data = await _refresh()
     data["cache_age_seconds"] = 0
     return data
+
+
+@app.get("/api/track-record")
+async def get_track_record():
+    """Logged predictions next to the Trent-side samples that followed (see history.track_record)."""
+    line = risk_model.load_model()["policy"]["caution_probability"]
+    return await asyncio.to_thread(history.track_record, line)
 
 
 @app.get("/api/history/{table}")
